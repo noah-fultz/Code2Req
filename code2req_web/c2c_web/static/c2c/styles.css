@@ -1,0 +1,71 @@
+
+.page_content{
+    width: 100vw;
+    height: 90vh;
+}
+
+.group-box {
+    position: absolute;
+    border: 2px dashed #333;
+    background-color: rgba(100, 100, 255, 0.1);
+    cursor: move;
+    pointer-events: auto;
+    z-index: 10;
+  }
+
+  .sidepanel-content {
+    word-wrap: break-word;     /* Break long words */
+    overflow-wrap: break-word; /* Support newer browsers */
+    white-space: normal;       /* Allow wrapping normally */
+}
+
+.tiny-table td,
+  .tiny-table th {
+    font-size: 12px !important;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .force-wrap {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: normal;
+  }
+
+  .source-link {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    display: inline-block;
+    max-width: 100%;
+  }
+
+.span_spacer{
+  margin-left:8px;
+}
+
+.gray{
+  color:gray;
+}
+
+.white{
+  background-color: white;
+}
+
+.accordion-soft-yes {
+  background-color: #e6f4ea !important;
+  color: #2e7d32 !important;
+}
+.accordion-soft-no {
+  background-color: #fdecea !important;
+  color: #c62828 !important;
+}
+.accordion-soft-maybe {
+  background-color: #fff8e1 !important;
+  color: #ef6c00 !important;
+}
+.accordion-soft-na {
+  background-color: #f0f0f0 !important;
+  color: #555 !important;
+}

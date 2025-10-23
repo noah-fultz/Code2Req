@@ -1,0 +1,74 @@
+@prefix : <http://example.org/code-repository#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+:RepositoryArtifact a owl:Class ;
+    rdfs:label "Repository artifact" .
+:CodeRepository a owl:Class ;
+    rdfs:label "Code Repository" ;
+    rdfs:subClassOf :RepositoryArtifact .
+:CodeDirectory a owl:Class ;
+    rdfs:label "Code Directory" ;
+    rdfs:subClassOf :RepositoryArtifact .
+:CodeFile a owl:Class ;
+    rdfs:label "Code File" ;
+    rdfs:subClassOf :RepositoryArtifact .
+:CodeArtifact a owl:Class ;
+    rdfs:label "Code Artifact" ;
+    rdfs:subClassOf :RepositoryArtifact .
+:Function a owl:Class ;
+    rdfs:label "Function" ;
+    rdfs:subClassOf :CodeArtifact .
+:Class a owl:Class ;
+    rdfs:label "Class" ;
+    rdfs:subClassOf :CodeArtifact .
+:Snippet a owl:Class ;
+    rdfs:label "Snippet" ;
+    rdfs:subClassOf :CodeArtifact .
+:Imports a owl:Class ;
+    rdfs:label "Dependency" ;
+    rdfs:subClassOf :CodeArtifact .
+:Feature a owl:Class ;
+    rdfs:label "Feature" .
+    rdfs:subClassOf :RepositoryArtifact .
+:hasDirectory a owl:ObjectProperty ;
+    rdfs:label "has directory" ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( :CodeRepository :CodeDirectory ) ] ;
+    rdfs:range :CodeDirectory .
+:hasFile a owl:ObjectProperty ;
+    rdfs:label "has file" ;
+    rdfs:domain :CodeDirectory ;
+    rdfs:range :CodeFile .
+:containsArtifact a owl:ObjectProperty ;
+    rdfs:label "contains artifact" ;
+    rdfs:domain :CodeFile ;
+    rdfs:range :CodeArtifact .
+:usesArtifact a owl:ObjectProperty ;
+    rdfs:label "uses artifact" ;
+    rdfs:domain :CodeArtifact ;
+    rdfs:range :CodeArtifact .
+:isFeatureFor a owl:ObjectProperty ;
+    rdfs:label "is feature for" ;
+    rdfs:domain :Feature ;
+    rdfs:range [ a owl:Class ; owl:unionOf ( :Feature :CodeArtifact) ] .
+:code a owl:DatatypeProperty ;
+    rdfs:domain :CodeArtifact ;
+    rdfs:range xsd:string ;
+    rdfs:label "code" .
+:name a owl:DatatypeProperty ;
+    rdfs:domain :RepositoryArtifact ;
+    rdfs:range xsd:string ;
+    rdfs:label "name" .
+:description a owl:DatatypeProperty ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( :Feature :CodeArtifact) ] ;
+    rdfs:range xsd:string ;
+    rdfs:label "description" .
+:score a owl:DatatypeProperty ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( :Feature :CodeArtifact) ] ;
+    rdfs:range xsd:string ;
+    rdfs:label "score" .
+:level a owl:DatatypeProperty ;
+    rdfs:domain :Feature ;
+    rdfs:range xsd:string ;
+    rdfs:label "level" .

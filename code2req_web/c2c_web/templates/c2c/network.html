@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Network Visualization{% endblock %}
+
+{% block content %}
+
+<!-- Cytoscape -->
+<script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+
+
+<!-- Fullscreen Graph Canvas -->
+<div id="cy" style="
+  position: fixed;
+  top: 56px;
+  left: 0;
+  width: 100vw;
+  height: calc(100vh - 56px);
+  z-index: 1;
+  background-color: #fff;"></div>
+
+<!-- Floating Accordion Panel -->
+<div class="position-fixed top-0 start-0 m-3 z-3" style="width: 320px; top: 60px!important;">
+  <div class="accordion shadow" id="floatingAccordion">
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="headingSettings">
+        <button class="accordion-button  bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSettings" aria-expanded="false" aria-controls="collapseSettings">
+          Network Settings
+        </button>
+      </h2>
+      <div id="collapseSettings" class="accordion-collapse collapse show" aria-labelledby="headingSettings" data-bs-parent="#floatingAccordion">
+        <div class="accordion-body">
+            <div class="mb-3">
+                <label for="nodeSearch" class="form-label">Search Node</label>
+                <div class="input-group">
+                  <input type="text" class="form-control" id="nodeSearch" placeholder="Enter node name or ID">
+                  <button class="btn btn-outline-secondary" type="button" id="searchButton">Search</button>
+                </div>
+              </div>
+            <label for="nodeFilter" class="form-label">View all nodes of type:</label>
+          <select class="form-select" id="nodeFilter">
+            <option value="features">Features</option>
+            <option value="code">Code</option>
+            <option value="codefeatures">Code And Features</option>
+            <option value="all">All</option>
+          </select>
+
+        </div>
+      </div>
+      
+    </div>
+  </div>
+</div>
+
+<!-- Slide-out panel -->
+<div id="sidePanel" class="position-fixed top-0 end-0 bg-light shadow p-3" style="width: 500px; height: 100%; display: none; z-index: 1050; overflow-y: auto;">
+  <button type="button" class="btn-close float-end" aria-label="Close" onclick="closeSidePanel()"></button>
+  <h5 id="sidePanelTitle" class="mt-3 sidepanel-content">Loading...</h5>
+  <div id="sidePanelContent" class="mt-3 small text-muted sidepanel-content">
+    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+  </div>
+</div>
+
+<!-- Initial Graph Data -->
+<script>
+  const initialData = {{ graph_data|safe }};
+</script>
+<script src="{% static 'c2c/source_info.js' %}"></script>
+<script src="{% static 'c2c/network.js' %}"></script>
+{% endblock %}

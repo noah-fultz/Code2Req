@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  web:
+    build: .
+    volumes:
+      - ./code2req_web:/app
+      - graphdb_data:/graphdb-home 
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    working_dir: /app
+    depends_on:
+      - graphdb 
+    networks:
+      - backend
+
+  graphdb:
+    image: ontotext/graphdb:10.8.4
+    ports:
+      - "7200:7200"
+    volumes:
+      - graphdb_data:/opt/graphdb/home
+    networks:
+      - backend
+
+volumes:
+  graphdb_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: <your/path/to/data>/graphdb_data
+      o: bind
+
+networks:
+  backend:

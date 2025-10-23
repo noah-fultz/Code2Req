@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load extra_filters %}
+{% block title %}Analyze{% endblock %}
+
+{% block content %}
+<div class="container mt-3">
+  <h1 class="mb-4">{{ project.name|default:"New Project" }}</h1>
+
+  <div class="row g-4">
+    <!-- Project Input Form Card -->
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h5 class="card-title mb-4">Project Setup</h5>
+          <form id="createProjectForm" method="post" enctype="multipart/form-data" action="{% url 'save_project' project.id|default:0 %}">
+            {% csrf_token %}
+
+
+            <div class="mb-3">
+                            <label for="projectName" class="form-label">Project Name</label>
+              <input type="text" class="form-control" id="projectName" name="project_name"
+                     value="{{ project.name|default:'' }}" required>
+              <label class="form-label">Source Code Input</label>
+            
+              <label for="githubRepo" class="form-label">GitHub Repository URL</label>
+              <input type="text" class="form-control mb-2" id="githubRepo" name="github_repo"
+                     value="{{ project.github_repo|default:'' }}" placeholder="https://github.com/username/repo">
+            
+              <label for="sourceZip" class="form-label mt-2">Or Upload Source Code (ZIP file)</label>
+              <input type="file" class="form-control" id="sourceZip" name="source_zip" accept=".zip">
+              
+              <div class="form-text">You can provide a GitHub repo URL or upload a ZIP file with source code. One is required.</div>
+            </div>
+
+            <div class="mb-3">
+  <label class="form-label">Analysis Settings</label>
+
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label for="clusters" class="form-label">Preferred Cluster size</label>
+      <input type="number" class="form-control" id="clusters" name="clusters"
+             min="1"
+             value="{{ project.clusters }}">
+      <div class="form-text">Preferred size of code clusters</div>
+    </div>
+
+    <div class="col-md-4">
+      <label for="topK" class="form-label">Top-K</label>
+      <input type="number" class="form-control" id="topK" name="top_k"
+             min="1"
+             value="{{ project.top_k|default_if_none:5 }}">
+      <div class="form-text">Number of results to retrieve for RAG</div>
+    </div>
+
+    <div class="col-md-4">
+      <label for="maxTokens" class="form-label">Max Tokens</label>
+      <input type="number" class="form-control" id="maxTokens" name="max_tokens"
+             min="1"
+             value="{{ project.max_tokens|default_if_none:400000 }}">
+      <div class="form-text">Maximum tokens to use in requirement generation</div>
+    </div>
+  </div>
+</div>
+
+<div class="mb-3">
+  <label for="modelSelect" class="form-label">Model</label>
+  <select class="form-select" id="modelSelect" name="model" required>
+    <option value="gpt-5"
+      {% if project.model == "gpt-5" or project.model == None %}selected{% endif %}>
+      gpt-5
+    </option>
+    <option value="qwen2.5-coder"
+      {% if project.model == "qwen2.5-coder" %}selected{% endif %}>
+      qwen2.5-coder
+    </option>
+  </select>
+  <div class="form-text">Choose the LLM for analysis.</div>
+</div>
+
+<div class="mb-3">
+  <label class="form-label d-block">Generate requirements</label>
+
+  <div class="form-check form-check-inline">
+    <input class="form-check-input" type="checkbox" id="useRag" name="use_rag"
+           {% if project.use_rag %}checked{% endif %}>
+    <label class="form-check-label" for="useRag">Use RAG</label>
+  </div>
+
+  <div class="form-check form-check-inline">
+    <input class="form-check-input" type="checkbox" id="useFeature" name="use_feature"
+           {% if project.use_feature %}checked{% endif %}>
+    <label class="form-check-label" for="useFeature">From Feature</label>
+  </div>
+
+  <div class="form-check form-check-inline">
+    <input class="form-check-input" type="checkbox" id="useCode" name="use_code"
+           {% if project.use_code %}checked{% endif %}>
+    <label class="form-check-label" for="useCode">From Code</label>
+  </div>
+</div>
+
+            
+
+            <div class="mb-3">
+              <label class="form-label">Existing requirements</label>
+            
+              <!-- Existing Files -->
+              {% if project.evaluation_files.all %}
+                {% for eval in project.evaluation_files.all %}
+                  {% if eval.name not in "Code_Features,Req_from_code,Code_Features_RAG,Req_from_code_RAG" %}
+                    <div class="mb-2 border p-2 rounded bg-light d-flex justify-content-between align-items-center" data-eval-id="{{ eval.id }}">
+                      <div>
+                        <strong>{{ eval.name }}</strong><br>
+                        <small>{{ eval.path|cut:"data/" }}</small>
+                      </div>
+                      <div class="d-flex align-items-center gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="markFileForDeletion({{ eval.id }})">Remove</button>
+                      </div>
+                    </div>
+                  {% endif %}
+                {% endfor %}
+                <input type="hidden" name="files_to_delete" id="filesToDelete" value="">
+              {% endif %}
+
+
+              <div id="evaluationFilesContainer"></div>
+              <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="addEvaluationFileInput()">+ Add Evaluation File</button>
+            </div>
+            
+
+            <div class="d-grid">
+              <button type="submit" class="btn btn-primary">
+                {% if project.id %} Save Changes {% else %} Create Project {% endif %}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis Pipelines Card -->
+    {% if project.id %}
+    <div class="col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+
+          <h5 class="card-title mb-3">Project Statistics</h5>
+          <div class="row row-cols-1 row-cols-md-2 g-1 small">
+            <div class="col d-flex justify-content-between">
+              <span>Lines of Code</span>
+              <span>{{ project.lines_of_code|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Functions</span>
+              <span>{{ project.functions|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Classes</span>
+              <span>{{ project.classes|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Snippets</span>
+              <span>{{ project.snippets|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Imports</span>
+              <span>{{ project.imports|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Code Artifacts</span>
+              <span>{{ project.artifacts|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Code Files</span>
+              <span>{{ project.codefiles|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Features</span>
+              <span>{{ project.features|default:"0" }}</span>
+            </div>
+            <div class="col d-flex justify-content-between">
+              <span>Code Tokens</span>
+              <span>{{ project.code_tokens|default:"0" }}</span>
+            </div>
+             <div class="col d-flex justify-content-between">
+              <span>Feature Tokens</span>
+              <span>{{ project.feature_tokens|default:"0" }}</span>
+            </div>
+          </div>
+<br>
+          <h5 class="card-title mb-4">Analysis Pipelines</h5>
+
+          <div id="analysisPipelines">
+            <div class="row g-3">
+                {% for type in analysis_types %}
+                <div class="col-12">
+                  <div class="card h-100 border-0 {% if project|get_analysis_status:type %}bg-success-subtle{% else %}bg-light{% endif %}">
+                    <div class="card-body p-3">
+                      <h6 class="card-title">{{ type|title }}</h6>
+                      {% if project|get_analysis_status:type %}
+                        <p class="card-text small mb-2">
+                            ✅ Analysis completed.
+                        </p>
+                        <div class="d-grid">
+                            <button class="btn btn-outline-primary btn-sm" onclick="startPipeline('{{ type }}')">
+                            Re-Run Analysis
+                            </button>
+                        </div>
+                      {% else %}
+                        <p class="card-text small mb-2">
+                            ⏳ Analysis pending.
+                        </p>
+                        <div class="d-grid">
+                        <button class="btn btn-outline-primary btn-sm" onclick="startPipeline('{{ type }}')">
+                            Run Analysis
+                        </button>
+                        </div>
+                      {% endif %}
+                      <div id="status-{{ type }}" class="mt-2 small text-muted"></div>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+              
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+
+document.getElementById('createProjectForm').addEventListener('submit', function(event) {
+  const githubRepo = document.getElementById('githubRepo').value.trim();
+  const sourceZip = document.getElementById('sourceZip').files.length;
+
+  if (!githubRepo && !sourceZip) {
+    event.preventDefault();
+    alert("Please provide either a GitHub repository URL or upload a source ZIP file.");
+  }
+});
+
+function addEvaluationFileInput() {
+  const container = document.getElementById('evaluationFilesContainer');
+  const index = container.children.length;
+
+  const div = document.createElement('div');
+  div.classList.add('mb-2');
+  div.innerHTML = `
+    <input type="text" name="eval_name_${index}" class="form-control mb-1" placeholder="File label (e.g. requirements)" required>
+    <input type="file" name="eval_file_${index}" class="form-control" accept=".csv" required>
+  `;
+  container.appendChild(div);
+}
+
+function markFileForDeletion(fileId) {
+  const toDeleteInput = document.getElementById('filesToDelete');
+  const current = toDeleteInput.value ? toDeleteInput.value.split(',') : [];
+  if (!current.includes(String(fileId))) {
+    current.push(fileId);
+    toDeleteInput.value = current.join(',');
+  }
+
+  // Remove the element from view
+  const fileDiv = document.querySelector(`[data-eval-id="${fileId}"]`);
+  if (fileDiv) {
+    fileDiv.remove();
+  }
+}
+
+function startPipeline(type) {
+  const statusDiv = document.getElementById(`status-${type}`);
+  statusDiv.innerText = "Starting analysis...";
+
+  fetch(`/start-analysis/{{ project.id }}/` + type + `/`, { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token }}' } })
+    .then(response => response.json())
+    .then(data => {
+      statusDiv.innerText = data.message;
+    })
+    .catch(error => {
+      console.error(error);
+      statusDiv.innerText = "Error starting analysis.";
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,29 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+django = "*"
+requests = "*"
+gitpython = "*"
+tree-sitter = "*"
+rdflib = "*"
+tree-sitter-python = "*"
+tree-sitter-java = "*"
+ollama = "*"
+chromadb = "*"
+sparqlwrapper = "*"
+beautifulsoup4 = "*"
+infomap = "*"
+scikit-learn = "*"
+pandas = "*"
+networkx = "*"
+tiktoken = "*"
+openai = "*"
+matplotlib = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.10"

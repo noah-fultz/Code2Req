@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load extra_filters %}
+{% block title %}Alignment Overview{% endblock %}
+
+{% block content %}
+
+<div class="container mt-5">
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-body">
+      <h5 class="card-title mb-3">Generation Alignment Overview</h5>
+      <div class="row text-center small">
+        {% for a in alignment %}
+        
+        <!-- Code Features -->
+        <div class="col-md-4 mb-2">
+          <div class="p-2 border rounded">
+            <strong>{{a.name}}</strong><br>
+            <span>Total:</span> {{ a.total }}<br>
+            <span>Linked:</span> {{ a.linked }}<br>
+            {% if a.f1 != 0 %}
+              <strong><span>F1:</span> {{ a.f1|floatformat:3 }}</strong>
+            {% endif %}
+          </div>
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+  </div>
+  
+
+  <div class="accordion" id="alignmentAccordionCombined">
+
+  {% for a in alignment%}
+    <div class="accordion-item">
+      <h2 class="accordion-header" id="heading{{a.id}}">
+        <button class="accordion-button bg-light text-dark collapsed" type="button" data-bs-toggle="collapse"
+                data-bs-target="#collapse{{a.id}}" aria-expanded="false" aria-controls="collapse{{a.id}}">
+          {{a.name}}
+        </button>
+      </h2>
+      <div id="collapse{{a.id}}" class="accordion-collapse collapse" aria-labelledby="heading{{a.id}}"
+           data-bs-parent="#alignmentAccordionCombined">
+        <div class="accordion-body">
+          <div class="table-responsive overflow-auto" style="max-width: 100%;">
+            <table class="table table-bordered table-hover table-sm align-middle mb-0 tiny-table" style="table-layout: fixed; width: 100%;">
+              <colgroup>
+                <col style="width: 10%;"> 
+                <col style="width: 20%;"> 
+                <col style="width: 5%;"> 
+                <col style="width: 10%;"> 
+                <col style="width: 35%;"> 
+              </colgroup>
+            
+              <thead class="table-light">
+                <tr>
+                  <th>Feature</th>
+                  <th>Linked Code</th>
+                  <th>Linked</th>
+                  <th>Semantic similarity</th>
+                  <th>Linked sources</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in a.alignments %}
+                <tr class="toggle-row" style="cursor: pointer;" data-row="tc_{{ forloop.counter }}">
+                  <td>
+                    <a href="#" class="source-link link-primary" data-source="{{ row.source }}">{{ row.source|feature_shortname }}</a>
+                  </td>
+                  <td>
+                    {% for code in row.linked_code %}
+                    <p style="margin-top: 0; margin-bottom: 0rem;"><a href="{{ code }}" target="_blank" data-source="{{ code }}" class="source-link link-primary">
+                      {{ code|feature_shortname }}
+                    </a></p>
+                    {% endfor %}
+                  </td>
+                  <td>
+                    {% if row.linked == "Yes" %}
+                      <span class="badge bg-success">Yes</span>
+                    {% elif row.linked == "No" %}
+                      <span class="badge bg-danger">No</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% for score in row.scores %}
+                    <p style="margin-top: 0; margin-bottom: 0rem;">{{ score }}</p>
+                    {% endfor %}
+                  </td>
+              
+                  <td>
+                    <ul class="mb-0 ps-3 force-wrap">
+                      {% for src in row.linked_sources %}
+                      <p style="margin-top: 0; margin-bottom: 0rem;"><a href="{{ src }}" target="_blank" data-source="{{ src }}" class="source-link link-primary">
+                        {{ src|feature_shortname }}
+                      </a></p>
+{% endfor %}
+                    </ul>
+                  </td>
+  
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% endfor %}
+
+  </div>
+
+</div>
+
+  <div id="sidePanel" class="position-fixed top-0 end-0 bg-light shadow p-3" style="width: 500px; height: 100%; display: none; z-index: 1050; overflow-y: auto;">
+    <button type="button" class="btn-close float-end" aria-label="Close" onclick="closeSidePanel()"></button>
+    <h5 id="sidePanelTitle" class="mt-3 sidepanel-content">Loading...</h5>
+    <div id="sidePanelContent" class="mt-3 small text-muted sidepanel-content">
+      <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>
+    </div>
+  </div>
+
+<script src="{% static 'c2c/source_info.js' %}"></script>
+  <script>
+
+    document.addEventListener("DOMContentLoaded", function () {
+      document.querySelectorAll(".source-link").forEach(link => {
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          const source = this.getAttribute("data-source");
+    
+          openSidePanel("Loading source...", []);
+          fetchData(source);
+        });
+      });
+    });
+
+
+document.addEventListener("DOMContentLoaded", function() {
+  document.querySelectorAll(".toggle-row").forEach(function(row) {
+    row.addEventListener("click", function() {
+      const rowId = this.getAttribute("data-row");
+
+      const preview1 = document.getElementById("preview-1-" + rowId);
+      const full1 = document.getElementById("full-1-" + rowId);
+      const preview2 = document.getElementById("preview-2-" + rowId);
+      const full2 = document.getElementById("full-2-" + rowId);
+
+      // Toggle visibility
+      if (preview1.classList.contains("d-none")) {
+        // Currently showing full → collapse to preview
+        preview1.classList.remove("d-none");
+        full1.classList.add("d-none");
+        preview2.classList.remove("d-none");
+        full2.classList.add("d-none");
+      } else {
+        // Currently showing preview → expand to full
+        preview1.classList.add("d-none");
+        full1.classList.remove("d-none");
+        preview2.classList.add("d-none");
+        full2.classList.remove("d-none");
+      }
+    });
+  });
+});
+
+    </script>
+    
+{% endblock %}
