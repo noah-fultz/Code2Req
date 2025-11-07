@@ -78,7 +78,7 @@ def plot_adherence_heatmaps_vertical(summary: pd.DataFrame, out_path: Path):
                 val = data.iloc[i, j]
                 if pd.isna(val):
                     continue
-                color = "black" if val > 75 else "white"
+                color = "black" if val > 50 else "white"
                 ax.text(j + 0.5, i + 0.5, format(val, fmt),
                         ha="center", va="center", color=color, fontsize=10)
 

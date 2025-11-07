@@ -113,19 +113,20 @@ def plot_abstraction_detail_hybrid_heatmaps(summary: pd.DataFrame, out_path: Pat
                 frac = val_match / 100
 
                 # Add rounded black bar (prettier overlay)
-                bar = FancyBboxPatch(
-                    (j, i + 0.83), frac, 0.12,
-                    boxstyle="round,pad=0.02,rounding_size=0.02",
-                    linewidth=0, facecolor="black", alpha=0.55,
-                    transform=ax.transData
-                )
-                ax.add_patch(bar)
+                if frac>0:
+                    bar = FancyBboxPatch(
+                        (j+0.03, i + 0.83), frac, 0.12,
+                        boxstyle="round,pad=0.02,rounding_size=0.02",
+                        linewidth=0, facecolor="black", alpha=1,
+                        transform=ax.transData
+                    )
+                    ax.add_patch(bar)
 
                 # Annotation text
-                color = "white" if val_base < 40 else "black"
+                color = "white" if val_base < 50 else "black"
                 ax.text(
                     j + 0.5, i + 0.38,
-                    f"{val_base:.0f} ({val_match:.0f}%)",
+                    f"{val_base:.0f} ({val_match:.0f})",
                     ha="center", va="center",
                     color=color, fontsize=8
                 )

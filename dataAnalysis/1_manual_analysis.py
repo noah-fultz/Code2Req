@@ -340,7 +340,7 @@ bars = ax.bar(
     linewidth=0.5,
 )
 yerr = np.nan_to_num(std_f1.values, nan=0.0)
-ax.errorbar(x, avg_f1.values, yerr=yerr, fmt="none", capsize=4, linewidth=1)
+ax.errorbar(x, avg_f1.values, yerr=yerr, fmt="none", capsize=4, linewidth=1, color="black")
 
 # Add numbers above bars
 for bar, value, err in zip(bars, avg_f1.values, yerr):
@@ -351,7 +351,8 @@ for bar, value, err in zip(bars, avg_f1.values, yerr):
         f"{value:.2f}",
         ha="center",
         va="bottom",
-        fontsize=9
+        fontsize=10,
+        color="black"
     )
 
 # Define a mapping from variation string → pretty label
@@ -369,9 +370,9 @@ label_map = {
 # When setting xticklabels, replace with mapped names
 ax.set_xticks(x)
 ax.set_xticklabels([label_map.get(v, v) for v in variations_present], 
-                   rotation=30, ha="right")
+                   rotation=20, ha="right", fontsize=10)
 
-ax.set_ylabel("Average F1 score")
+ax.set_ylabel("Average F1 score", fontsize=11)
 ax.set_title("Average F1 score across projects (eANCI, SMOS, eTour, iTrust)")
 ax.set_ylim(0, 1.05)
 
@@ -441,7 +442,7 @@ for bar, val, err in zip(bars, avg_lifts.values(), yerr):
         f"{val:.1f}%",
         ha="center",
         va="bottom",
-        fontsize=9
+        fontsize=11
     )
 
 # Baseline at y=0
@@ -456,10 +457,10 @@ label_map = {
 }
 ax.set_xticks(x)
 ax.set_xticklabels([label_map.get(v, v) for v in avg_lifts.keys()],
-                   rotation=20, ha="right")
+                   rotation=10, ha="right", fontsize=12)
 
-ax.set_ylabel("Avg. percent change in F1 score")
-ax.set_title("Average percent change in F1 score using RAG across projects")
+ax.set_ylabel("Avg. percent change in F1 score", fontsize=12)
+ax.set_title("Average percent change in F1 score using RAG across projects", fontsize=14)
 
 plt.tight_layout()
 lift_path = plots_dir / "avg_percent_lift_manual_f1.png"
