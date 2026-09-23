@@ -11,7 +11,8 @@ Running multiple times (repeat measurement): pass --runs N (e.g. --runs 3) to
 run the whole LLM pipeline N times per dataset/variant. All runs are appended
 to the same checkpoint CSV / output workbook, tagged with a "run" column.
 --agreement then computes Cohen's kappa and % agreement separately for each
-run found in the checkpoints, plus the average kappa/agreement across runs.
+run found in the checkpoints, plus the mean and sample standard deviation
+across runs. The standard deviation describes run-to-run LLM variability.
 
 Run analysis:
 python 0_manual_analysis_with_llm_protocol_openai.py --runs 3 --agreement
@@ -445,10 +446,11 @@ def collect_agreement_pairs(
     if not llm_checkpoint:
         print(f"Skipping {dataset}_{variant} run {run}: no LLM checkpoint found.")
         return 0
+    llm_checkpoint_by_id = {normalize_id(req_id): row for req_id, row in llm_checkpoint.items()}
 
     n_pairs = 0
     for _, h_row in human_df.iterrows():
-        l_row = llm_checkpoint.get(h_row["id"])
+        l_row = llm_checkpoint_by_id.get(normalize_id(h_row["id"]))
         if l_row is None:
             continue
         n_pairs += 1
@@ -462,28 +464,41 @@ def collect_agreement_pairs(
 
         h_ids = split_list(h_row.get("key_concept_manually_matched_to"))
         l_ids = split_list(l_row.get("key_concept_manually_matched_to"))
+        # Gold-standard IDs are identifiers, not categorical labels. Normalize
+        # their spelling before comparing them so capitalization/outer whitespace
+        # cannot create a false disagreement.
+        h_ids_norm = [normalize_id(i) for i in h_ids]
+        l_ids_norm = [normalize_id(i) for i in l_ids]
         records.setdefault("is_mapped_to_gold", []).append(
             ("yes" if h_ids else "no", "yes" if l_ids else "no")
         )
-        set_pairs.append((frozenset(h_ids), frozenset(l_ids)))
+        set_pairs.append((frozenset(h_ids_norm), frozenset(l_ids_norm)))
 
         # Strict per-gold-id binary agreement: for every gold-standard id, did each
         # rater include it in this requirement's matched-to set? Flattening this
         # into yes/no pairs (one per gold id) lets Cohen's kappa be computed over
         # the full binary indicator matrix, exactly-matching-ids-as-true style.
-        h_ids_norm = {normalize_id(i) for i in h_ids}
-        l_ids_norm = {normalize_id(i) for i in l_ids}
+        h_ids_norm_set = set(h_ids_norm)
+        l_ids_norm_set = set(l_ids_norm)
         for gold_id in gold_ids:
             records.setdefault("key_concept_match_strict", []).append((
-                "yes" if gold_id in h_ids_norm else "no",
-                "yes" if gold_id in l_ids_norm else "no",
+                "yes" if gold_id in h_ids_norm_set else "no",
+                "yes" if gold_id in l_ids_norm_set else "no",
             ))
 
         # Per-gold-id fields (secondary concept / details match) are only meaningful
         # for gold ids both raters mapped this requirement to.
         for field in PER_ID_AGREEMENT_FIELDS:
-            h_map = dict(zip(h_ids, split_list(h_row.get(field))))
-            l_map = dict(zip(l_ids, split_list(l_row.get(field))))
+            h_labels = split_list(h_row.get(field))
+            l_labels = split_list(l_row.get(field))
+            if len(h_labels) != len(h_ids_norm) or len(l_labels) != len(l_ids_norm):
+                print(
+                    f"Skipping {field} for {dataset}_{variant} requirement {h_row['id']} "
+                    f"run {run}: the number of labels does not match the number of mapped IDs."
+                )
+                continue
+            h_map = dict(zip(h_ids_norm, h_labels))
+            l_map = dict(zip(l_ids_norm, l_labels))
             for gold_id in set(h_map) & set(l_map):
                 h_val, l_val = _norm(h_map[gold_id]), _norm(l_map[gold_id])
                 if h_val is None or l_val is None:
@@ -521,8 +536,11 @@ def summarize_agreement(records: Dict[str, "PairList"]) -> pd.DataFrame:
         rows.append({
             "field": field,
             "n_pairs": n,
-            "percent_agreement": round(percent_agreement, 1),
-            "cohens_kappa": round(kappa, 3) if kappa == kappa else None,
+            # Keep full precision here. Rounding belongs in the presentation
+            # layer; otherwise means and SDs across runs are calculated from
+            # already-rounded values.
+            "percent_agreement": percent_agreement,
+            "cohens_kappa": kappa if kappa == kappa else None,
             "interpretation": kappa_interpretation(kappa) if kappa == kappa else "n/a",
         })
     return pd.DataFrame(rows)
@@ -544,9 +562,10 @@ def summarize_set_agreement(set_pairs: SetPairList) -> pd.DataFrame:
     return pd.DataFrame([{
         "field": "key_concept_manually_matched_to",
         "n_pairs": n,
-        "exact_set_match_pct": round(exact_match_pct, 1),
-        "mean_jaccard": round(mean_jaccard, 3),
-        "mean_dice_f1": round(mean_dice_f1, 3),
+        # Retain full precision until results are displayed or written.
+        "exact_set_match_pct": exact_match_pct,
+        "mean_jaccard": mean_jaccard,
+        "mean_dice_f1": mean_dice_f1,
     }])
 
 
@@ -575,6 +594,21 @@ def format_agreement_table(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]
     out = df.copy()
     out["field"] = out["field"].map(lambda f: FIELD_DISPLAY_NAMES.get(f, f))
     lead_cols = [c for c in ("run", "variant", "n_runs") if c in out.columns]
+    if "percent_agreement_sd" in out.columns:
+        out["agreement_mean_sd"] = out.apply(
+            lambda row: _format_mean_sd(row["percent_agreement"], row["percent_agreement_sd"], 1), axis=1
+        )
+        out["kappa_mean_sd"] = out.apply(
+            lambda row: _format_mean_sd(row["cohens_kappa"], row["cohens_kappa_sd"], 3), axis=1
+        )
+        out = out[lead_cols + ["field", "agreement_mean_sd", "kappa_mean_sd"]]
+        return out.rename(columns={
+            "field": "Variable",
+            "agreement_mean_sd": "Agreement (%), mean ± SD",
+            "kappa_mean_sd": "Cohen's κ, mean ± SD",
+        })
+    out["percent_agreement"] = out["percent_agreement"].round(1)
+    out["cohens_kappa"] = out["cohens_kappa"].round(3)
     out = out[lead_cols + ["field", "percent_agreement", "cohens_kappa"]]
     return out.rename(columns={
         "field": "Variable",
@@ -591,6 +625,21 @@ def format_set_agreement_table(df: Optional[pd.DataFrame]) -> Optional[pd.DataFr
     out = df.copy()
     out["field"] = out["field"].map(lambda f: FIELD_DISPLAY_NAMES.get(f, f))
     lead_cols = [c for c in ("run", "variant", "n_runs") if c in out.columns]
+    if "exact_set_match_pct_sd" in out.columns:
+        out["exact_mean_sd"] = out.apply(
+            lambda row: _format_mean_sd(row["exact_set_match_pct"], row["exact_set_match_pct_sd"], 1), axis=1
+        )
+        out["jaccard_mean_sd"] = out.apply(
+            lambda row: _format_mean_sd(row["mean_jaccard"], row["mean_jaccard_sd"], 3), axis=1
+        )
+        out = out[lead_cols + ["field", "exact_mean_sd", "jaccard_mean_sd"]]
+        return out.rename(columns={
+            "field": "Variable",
+            "exact_mean_sd": "Exact set match (%), mean ± SD",
+            "jaccard_mean_sd": "Jaccard, mean ± SD",
+        })
+    out["exact_set_match_pct"] = out["exact_set_match_pct"].round(1)
+    out["mean_jaccard"] = out["mean_jaccard"].round(3)
     out = out[lead_cols + ["field", "exact_set_match_pct", "mean_jaccard"]]
     return out.rename(columns={
         "field": "Variable",
@@ -599,13 +648,22 @@ def format_set_agreement_table(df: Optional[pd.DataFrame]) -> Optional[pd.DataFr
     })
 
 
+def _format_mean_sd(mean: float, sd: float, decimals: int) -> str:
+    """Format a mean and run-to-run sample SD for the average worksheet."""
+    if pd.isna(mean):
+        return "n/a"
+    if pd.isna(sd):
+        return f"{mean:.{decimals}f} ± n/a"
+    return f"{mean:.{decimals}f} ± {sd:.{decimals}f}"
+
+
 def average_agreement_summaries(
     run_summaries: List[pd.DataFrame], group_cols: Optional[List[str]] = None
 ) -> pd.DataFrame:
     """Averages a list of per-run summarize_agreement() dataframes (one per run) into
-    a single dataframe with mean n_pairs/percent_agreement/cohens_kappa per field
-    (or per group_cols, e.g. ["variant", "field"]), plus n_runs = how many runs
-    contributed a value for that field. Row order follows first appearance."""
+    a single dataframe with mean and sample SD (ddof=1) for percent agreement
+    and Cohen's kappa per field (or per group_cols, e.g. ["variant", "field"]),
+    plus n_runs = how many runs contributed. Row order follows first appearance."""
     group_cols = group_cols or ["field"]
     non_empty = [df for df in run_summaries if df is not None and not df.empty]
     if not non_empty:
@@ -616,11 +674,15 @@ def average_agreement_summaries(
         n_runs=("percent_agreement", "size"),
         n_pairs=("n_pairs", "mean"),
         percent_agreement=("percent_agreement", "mean"),
+        percent_agreement_sd=("percent_agreement", "std"),
         cohens_kappa=("cohens_kappa", "mean"),
+        cohens_kappa_sd=("cohens_kappa", "std"),
     ).reset_index()
     agg["n_pairs"] = agg["n_pairs"].round(1)
     agg["percent_agreement"] = agg["percent_agreement"].round(1)
+    agg["percent_agreement_sd"] = agg["percent_agreement_sd"].round(1)
     agg["cohens_kappa"] = agg["cohens_kappa"].round(3)
+    agg["cohens_kappa_sd"] = agg["cohens_kappa_sd"].round(3)
     agg["interpretation"] = agg["cohens_kappa"].apply(lambda k: kappa_interpretation(k) if pd.notna(k) else "n/a")
     return order.merge(agg, on=group_cols, how="left")
 
@@ -639,13 +701,19 @@ def average_set_agreement_summaries(
         n_runs=("n_pairs", "size"),
         n_pairs=("n_pairs", "mean"),
         exact_set_match_pct=("exact_set_match_pct", "mean"),
+        exact_set_match_pct_sd=("exact_set_match_pct", "std"),
         mean_jaccard=("mean_jaccard", "mean"),
+        mean_jaccard_sd=("mean_jaccard", "std"),
         mean_dice_f1=("mean_dice_f1", "mean"),
+        mean_dice_f1_sd=("mean_dice_f1", "std"),
     ).reset_index()
     agg["n_pairs"] = agg["n_pairs"].round(1)
     agg["exact_set_match_pct"] = agg["exact_set_match_pct"].round(1)
+    agg["exact_set_match_pct_sd"] = agg["exact_set_match_pct_sd"].round(1)
     agg["mean_jaccard"] = agg["mean_jaccard"].round(3)
+    agg["mean_jaccard_sd"] = agg["mean_jaccard_sd"].round(3)
     agg["mean_dice_f1"] = agg["mean_dice_f1"].round(3)
+    agg["mean_dice_f1_sd"] = agg["mean_dice_f1_sd"].round(3)
     return order.merge(agg, on=group_cols, how="left")
 
 
@@ -699,7 +767,7 @@ def write_agreement_to_workbook(
         sheet_name = _excel_sheet_name(AGREEMENT_SHEET_PREFIX + "_run", str(run))
         _write_agreement_sheet(wb, sheet_name, index, f" - Run {run}", per_run_results[run])
         index += 1
-    _write_agreement_sheet(wb, f"{AGREEMENT_SHEET_PREFIX}_avg", index, " - Average across runs", avg_results)
+    _write_agreement_sheet(wb, f"{AGREEMENT_SHEET_PREFIX}_avg", index, " - Mean ± sample SD across runs", avg_results)
 
     wb.save(OUTPUT_XLSX)
     print(f"\nWrote agreement results to '{AGREEMENT_SHEET_PREFIX}_run*' and '{AGREEMENT_SHEET_PREFIX}_avg' sheets in {OUTPUT_XLSX}")
@@ -788,12 +856,12 @@ def compute_agreement(datasets: List[str], variants: List[str], per_variant: boo
         }
 
     avg_summary = average_agreement_summaries(per_run_summaries)
-    print(f"\n=== Average inter-rater agreement across {len(runs)} run(s) (human vs LLM) ===")
+    print(f"\n=== Mean ± sample SD of inter-rater agreement across {len(runs)} run(s) (human vs LLM) ===")
     print(format_agreement_table(avg_summary).to_string(index=False))
 
     avg_set_summary = average_set_agreement_summaries(per_run_set_summaries)
     if not avg_set_summary.empty:
-        print(f"\n=== Average key concept match agreement across {len(runs)} run(s) (set overlap) ===")
+        print(f"\n=== Mean ± sample SD of key concept match agreement across {len(runs)} run(s) (set overlap) ===")
         print(format_set_agreement_table(avg_set_summary).to_string(index=False))
 
     avg_variant_summary = None
@@ -801,11 +869,11 @@ def compute_agreement(datasets: List[str], variants: List[str], per_variant: boo
     if per_variant:
         if per_run_variant_summaries:
             avg_variant_summary = average_agreement_summaries(per_run_variant_summaries, group_cols=["variant", "field"])
-            print("\n=== Per-variant inter-rater agreement (averaged across runs) ===")
+            print("\n=== Per-variant inter-rater agreement (mean ± sample SD across runs) ===")
             print(format_agreement_table(avg_variant_summary).to_string(index=False))
         if per_run_variant_set_summaries:
             avg_variant_set_summary = average_set_agreement_summaries(per_run_variant_set_summaries, group_cols=["variant", "field"])
-            print("\n=== Per-variant key concept match agreement (set overlap, averaged across runs) ===")
+            print("\n=== Per-variant key concept match agreement (set overlap, mean ± sample SD across runs) ===")
             print(format_set_agreement_table(avg_variant_set_summary).to_string(index=False))
 
     write_agreement_to_workbook(per_run_results, {
@@ -1082,7 +1150,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run automated (LLM-based) manual analysis using the verbatim coding protocol as instructions.")
     parser.add_argument("--datasets", nargs="*", default=DATASETS, help="Subset of datasets to process.")
     parser.add_argument("--variants", nargs="*", default=VARIANTS, help="Subset of variants to process.")
-    parser.add_argument("--runs", type=int, default=1, help="Number of times to repeat the whole LLM analysis per dataset/variant (e.g. --runs 3). All runs are appended to the same checkpoint/output file, tagged with a 'run' column, and --agreement reports both per-run and averaged kappa/agreement.")
+    parser.add_argument("--runs", type=int, default=1, help="Number of times to repeat the whole LLM analysis per dataset/variant (e.g. --runs 3). All runs are appended to the same checkpoint/output file, tagged with a 'run' column, and --agreement reports per-run results plus their mean and sample SD.")
     parser.add_argument("--limit", type=int, default=None, help="Max number of new requirements per variant (for testing).")
     parser.add_argument("--compile-only", action="store_true", help="Skip LLM calls, just rebuild the output workbook from checkpoints.")
     parser.add_argument("--batch-size", type=int, default=None, help="Max number of requirements per LLM call (default: all pending requirements in one call).")
