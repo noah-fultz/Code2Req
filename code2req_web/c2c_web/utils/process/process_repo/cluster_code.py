@@ -15,17 +15,37 @@ import tiktoken
 from rdflib import Graph, Namespace, RDF
 from typing import List, Tuple, Set, Optional
 
-
 from rdflib import URIRef
 
-def get_tokens(text):
+'''
+* Returns a GPT-4 based estimation of the number of tokens required for a text
+*  text (str) - The text whose token count is being estimated
+*
+*  Returns (int) - The GPT-based estimated token count of the text
+'''
+def get_tokens(text: str) -> int:
+    # Select the GPT-4 tokenizer
     encoding = tiktoken.encoding_for_model("gpt-4")
+    # Use the tokenizer to return the length of the token ID lengths
     return len(encoding.encode(text))
 
-def are_in_same_codefile(member1: str, member2: str, graph, EX) -> bool:
+
+'''
+* Checks whether two artifacts share at least one common code file
+*  member1 (str) - URI string that identifies the first artifact
+*  member2 (str) - URI string that identifies the second artifact
+*  graph (Graph) - The artifact and dependency relationships
+*  EX (Namespace) - Defines the artifact and predicate types
+* 
+*  Returns (bool) - False IFF the set of subjects containing member1 is disjoint
+*    from the set of subjects containing member2, True OW
+'''
+def are_in_same_codefile(member1: str, member2: str, graph: Graph, EX: Namespace) -> bool:
+    # Convert the string URIs into URIRefs for querying
     uri1 = URIRef(member1)
     uri2 = URIRef(member2)
-    # Find all CodeFiles that contain each artifact
+    # Codefiles contain artifacts, so gather two sets of stringified subjects
+    # that contain each artifact
     files1 = {
         str(codefile)
         for codefile in graph.subjects(predicate=EX.containsArtifact, object=uri1)
@@ -38,28 +58,42 @@ def are_in_same_codefile(member1: str, member2: str, graph, EX) -> bool:
     in_same_file = not files1.isdisjoint(files2)
     return in_same_file
 
-def get_embedded(graph: Graph,EX: Namespace):
+
+'''
+* Builds a dictionary of artifact-to-artifact relationships that participate
+* in a 'uses' relationship
+*  graph (Graph) - The artifact and dependency relationships
+*  EX (Namespace) - Defines the artifact and predicate types
+*
+*  Returns ()
+'''
+def get_embedded(graph: Graph, EX: Namespace):
     embeddings = {}
+    # Define the artifact types that can use/be used
     code_artifact_classes = {EX.Function, EX.Class, EX.Snippet}
 
-    # Create a fast lookup set for all allowed artifacts
+    # Query for a set of all subjects of the allowed types
     valid_artifacts = {
         str(s)
         for class_type in code_artifact_classes
         for s in graph.subjects(RDF.type, class_type)
     }
 
+    # Iterate through all triples with the 'uses' relationship
     for s, p, o in graph.triples((None, EX.usesArtifact, None)):
+        # Extract the subject and object
         s_str, o_str = str(s), str(o)
+        # Embed the subjects in the graph
         if s_str in valid_artifacts and o_str in valid_artifacts:
             if s_str not in embeddings:
                 code = graph.value(subject=URIRef(s_str), predicate=EX.code)
-                embeddings[s_str]=1#embed(code)[0]
+                embeddings[s_str] = 1 # embed(code)[0]
             if o_str not in embeddings:
                 code = graph.value(subject=URIRef(o_str), predicate=EX.code)
-                embeddings[o_str]=1#embed(code)[0]
+                embeddings[o_str] = 1 # embed(code)[0]
 
     return embeddings
+
 
 def get_artifact_edgelist(
     graph: Graph,
@@ -104,7 +138,7 @@ def get_artifact_cluster_descriptions(cluster_members, graph, EX):
         if code:
             all_desc[str(member)] = str(code)
         else:
-            print("WARN!!! "+member+" has no code")
+            print("WARN!!! " + member + " has no code")
     return all_desc
 
 
@@ -146,7 +180,7 @@ def run_infomap(edge_list, preferred_cluster_size, force_split=False):
         infomap = Infomap("--directed --seed 42 --silent")
 
     for src, tgt, score in edge_list:
-        infomap.addLink(uri_to_id[src], uri_to_id[tgt], score)
+        infomap.add_link(uri_to_id[src], uri_to_id[tgt], score)
 
     infomap.run()
     clusters = defaultdict(list)

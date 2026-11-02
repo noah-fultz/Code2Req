@@ -59,8 +59,8 @@ def start_repository_analysis(project):
     graph.serialize(graph_file, format="turtle") # Storing in case something breaks 
 
     # 3. Upload model and graph to graphDB
-    upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path="data/repoModel.ttl",graph_uri=settings.GRAPH_URI)
-    upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path=graph_file,graph_uri=settings.GRAPH_URI)
+    upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path="data/repoModel.ttl", graph_uri=settings.GRAPH_URI)
+    upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path=graph_file, graph_uri=settings.GRAPH_URI)
     
     # # 4. Embed all text for artifacts and features and save project stats
     graph = Graph()

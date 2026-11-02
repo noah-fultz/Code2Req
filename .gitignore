@@ -177,3 +177,6 @@ graphdbData/
 chroma_DB/
 .DS_Store
 repo/
+
+graphdb_data/
+c2c_web/data/

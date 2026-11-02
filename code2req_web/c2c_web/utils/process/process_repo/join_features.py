@@ -141,7 +141,7 @@ def run_infomap_on_similarity(edges, feature_ids, num_clusters):
     infomap = Infomap(silent=True, directed=False)
 
     for src, tgt, weight in edges:
-        infomap.addLink(src, tgt, weight)
+        infomap.add_link(src, tgt, weight)
     infomap.run()
     clusters = {}
     for node in infomap.nodes:

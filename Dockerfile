@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.14-slim
 
 ENV PIP_NO_INPUT=1 \
     PIPENV_VENV_IN_PROJECT=1 \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY Pipfile* ./
+RUN pip install --upgrade pipenv
 RUN pipenv install --deploy --dev --system
 ENV PYTHONUNBUFFERED=1
 
