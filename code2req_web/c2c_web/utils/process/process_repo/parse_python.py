@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from c2c_web.utils.utils import get_exists, get_code_artifacts_for_file
 from rdflib import URIRef
