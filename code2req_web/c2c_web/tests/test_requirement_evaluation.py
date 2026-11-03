@@ -7,9 +7,60 @@ from unittest.mock import patch
 from django.test import TestCase
 
 from c2c_web.models import EvaluationFile, EvaluationUnit, Project
+from c2c_web.utils.alignment.alignment import get_alignment
 from c2c_web.utils.create_and_analyze import analyze as analyze_module
 from c2c_web.utils.process.process_req import compare as compare_module
 from c2c_web.utils.process.process_req import process_eval_file as process_module
+
+
+class AlignmentTests(TestCase):
+    def test_alignment_preserves_composite_links_and_handles_unlinked_units(self):
+        project = Project.objects.create(
+            name="alignment-project",
+            github_repo="https://example.com/alignment-project",
+        )
+        reference_file = EvaluationFile.objects.create(
+            project=project,
+            name="Reference requirements",
+            path="",
+        )
+        generated_file = EvaluationFile.objects.create(
+            project=project,
+            name="Code_Features",
+            path="",
+        )
+        linked_unit = EvaluationUnit.objects.create(
+            file=generated_file,
+            identifier="feature_req_1",
+            description="A generated requirement.",
+            linked_feature_ids=[
+                f"{reference_file.id}:REQ-1",
+                "Code_Features_RAG:feature_RAG_req_1",
+            ],
+            linked_code=["http://example.org/code#search"],
+            scores=["0.95", "0.91"],
+        )
+        unlinked_unit = EvaluationUnit.objects.create(
+            file=generated_file,
+            identifier="feature_req_2",
+            description="Another generated requirement.",
+        )
+
+        result = get_alignment(project)
+
+        generated_alignment = next(section for section in result if section["name"] == "From Feature")
+        rows = generated_alignment["alignments"]
+        linked_row = next(row for row in rows if row["source"] == linked_unit.identifier)
+        unlinked_row = next(row for row in rows if row["source"] == unlinked_unit.identifier)
+        self.assertEqual(
+            linked_row["linked_sources"],
+            [f"{reference_file.id}:REQ-1", "Code_Features_RAG:feature_RAG_req_1"],
+        )
+        self.assertEqual(linked_row["linked_code"], ["http://example.org/code#search"])
+        self.assertEqual(linked_row["scores"], ["0.95", "0.91"])
+        self.assertEqual(linked_row["linked"], "Yes")
+        self.assertEqual(unlinked_row["linked_sources"], [])
+        self.assertEqual(unlinked_row["linked"], "No")
 
 
 class RequirementComparisonTests(TestCase):

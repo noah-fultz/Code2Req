@@ -1,5 +1,5 @@
 
-from c2c_web.models import EvaluationFile, EvaluationUnit 
+from c2c_web.models import EvaluationFile, EvaluationUnit
 from c2c_web.utils.utils import query_graphdb
 from rdflib import URIRef, RDF
 from typing import List
@@ -27,12 +27,7 @@ def get_alignment(project):
             linked="Yes"
             if unit.linked_feature_ids==[]:
                 linked="No"
-            linked_classes=set()
-            for f in unit.linked_feature_ids:
-                related_unit = EvaluationUnit.objects.filter(identifier=f).first()
-                for rc in related_unit.linked_code:
-                    linked_classes.add(rc)
-            alignment["alignments"].append({"source":unit.identifier, "linked":linked, "scores":unit.scores, "linked_sources":unit.linked_feature_ids, "linked_code":unit.linked_code, "linked_classes":list(linked_classes)})
+            alignment["alignments"].append({"source":unit.identifier, "linked":linked, "scores":unit.scores, "linked_sources":unit.linked_feature_ids, "linked_code":unit.linked_code})
         alignments.append(alignment)
 
     return alignments
