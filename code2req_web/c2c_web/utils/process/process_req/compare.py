@@ -1,16 +1,18 @@
+import csv
 import re
+from pathlib import Path
 from typing import Dict
 
-from c2c_web.models import EvaluationFile, EvaluationUnit 
+from c2c_web.models import EvaluationFile, EvaluationUnit
 from c2c_web.utils.utils import embed, cosine_similarity, get_all_from_vectordb, query_graphdb
 import statistics
 import pandas as pd
 import matplotlib.pyplot as plt
 
 def f1_score(tp, fp, fn):
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    precision = tp / (tp + fp) if tp + fp > 0 else 0.0
+    recall = tp / (tp + fn) if tp + fn > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
     return f1, precision, recall
 
 def extract_name(value):
@@ -20,251 +22,184 @@ def extract_name(value):
         return ex.replace("_"," ")
 
 def get_embeddings(text_dict):
-    """Embeds all texts in a dictionary once and returns a dict of embeddings."""
-    embedded_dict={}
-    for id in text_dict:
-        embedded_dict[id]=embed(text_dict[id])[0]
-    return embedded_dict
+    return {identifier: embed(text)[0] for identifier, text in text_dict.items()}
 
 
 def get_unit_dict(eval_file):
-    eval_units = EvaluationUnit.objects.filter(file=eval_file)
-    text_dict={}
-    for unit in eval_units:
-        # text_dict[unit.identifier]=unit.transformed_description
-        text_dict[unit.identifier]=unit.description
-    return text_dict
+    return {
+        unit.identifier: unit.description
+        for unit in EvaluationUnit.objects.filter(file=eval_file)
+    }
+
+
+def _variant_specs(project):
+    variants = []
+    if project.use_feature:
+        variants.append(("Code_Features", "generated_reqs_features.tsv"))
+    if project.use_code:
+        variants.append(("Req_from_code", "generated_reqs_code.tsv"))
+    if project.use_rag and project.use_feature:
+        variants.append(("Code_Features_RAG", "generated_reqs_features_rag.tsv"))
+    if project.use_rag and project.use_code:
+        variants.append(("Req_from_code_RAG", "generated_reqs_code_rag.tsv"))
+    return variants
+
+
+def _write_tsv(path, rows):
+    with open(path, "w", encoding="utf-8", newline="") as output:
+        writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+        writer.writerow(("#id", "Requirement", "linked"))
+        writer.writerows(rows)
+
+
+def _reference_report_path(report_dir, reference_file):
+    if reference_file.name == "Requirements":
+        return report_dir / "reqs_linked.tsv"
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", reference_file.name).strip("_.")
+    return report_dir / f"reference_{reference_file.id}_{safe_name}_linked.tsv"
 
 
 def compare(project, comparison_report_path, similarity_cutoff=0.8):
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Code_Features").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    all_code_features={}
-    for feat_req in all_code_feature_reqs:
-        all_code_features[feat_req.identifier]=feat_req.description
-    embedded_cf = get_embeddings(all_code_features) 
-    all_linked_code_features={}
+    report_dir = Path(comparison_report_path)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    generated_names = {"Code_Features", "Req_from_code", "Code_Features_RAG", "Req_from_code_RAG"}
+    reference_files = [
+        file for file in project.evaluation_files.all()
+        if file.name not in generated_names
+    ]
+    if not reference_files:
+        return
 
-    re_from_code_file = EvaluationFile.objects.filter(project=project, name="Req_from_code").first()
-    all_reqs_from_code = EvaluationUnit.objects.filter(file=re_from_code_file)
-    all_req_f_code={}
-    for feat_req in all_reqs_from_code:
-        all_req_f_code[feat_req.identifier]=feat_req.description
-    embedded_rc = get_embeddings(all_req_f_code) 
-    all_linked_req_from_code={}
+    variants = _variant_specs(project)
+    variant_files = {}
+    for name, report_name in variants:
+        generated_file = EvaluationFile.objects.filter(project=project, name=name).first()
+        if generated_file is None:
+            raise ValueError(
+                f"Enabled requirement generator '{name}' did not create its output record. "
+                "Check generation logs before comparing results."
+            )
+        variant_files[name] = {
+            "file": generated_file,
+            "report": report_name,
+            "units": list(EvaluationUnit.objects.filter(file=generated_file)),
+        }
 
-    code_feature_rag_file = EvaluationFile.objects.filter(project=project, name="Code_Features_RAG").first()
-    all_code_feature_rag_reqs = EvaluationUnit.objects.filter(file=code_feature_rag_file)
-    all_code_features_rag={}
-    for feat_req in all_code_feature_rag_reqs:
-        all_code_features_rag[feat_req.identifier]=feat_req.description
-    embedded_cf_rag = get_embeddings(all_code_features_rag) 
-    all_linked_code_features_rag={}
+    reference_units = {}
+    for reference_file in reference_files:
+        units = list(EvaluationUnit.objects.filter(file=reference_file))
+        reference_units[reference_file.id] = units
+        for unit in units:
+            unit.linked_feature_ids = []
+            unit.scores = []
+            unit.save(update_fields=["linked_feature_ids", "scores"])
 
-    re_from_code_rag_file = EvaluationFile.objects.filter(project=project, name="Req_from_code_RAG").first()
-    all_reqs_from_code_rag = EvaluationUnit.objects.filter(file=re_from_code_rag_file)
-    all_req_f_code_rag={}
-    for feat_req in all_reqs_from_code_rag:
-        all_req_f_code_rag[feat_req.identifier]=feat_req.description
-    embedded_rc_rag = get_embeddings(all_req_f_code_rag) 
-    all_linked_req_from_code_rag={}
+    for variant in variant_files.values():
+        for unit in variant["units"]:
+            unit.linked_feature_ids = []
+            unit.scores = []
+            unit.save(update_fields=["linked_feature_ids", "scores"])
 
-    total_count=0
-    used_unit_for_feature=set()
-    used_unit_for_code=set()
-    used_unit_for_feature_rag=set()
-    used_unit_for_code_rag=set()
-    all_units=0
-    for eval_file in project.evaluation_files.all():
-        if eval_file.name!="Code_Features" and eval_file.name!="Req_from_code" and eval_file.name!="Code_Features_RAG" and eval_file.name!="Req_from_code_RAG":
-            unit_dict=get_unit_dict(eval_file)
-            embedded_units = get_embeddings(unit_dict)
-            all_units+=len(unit_dict)
-            used_code_features=set()
-            used_req_from_code=set()
-            used_code_features_rag=set()
-            used_req_from_code_rag=set()
-            all_cf_similarity=[]
-            all_rc_similarity=[]
-            all_cf_similarity_with_ids=[]
-            all_rc_similarity_with_ids=[]
-            all_cf_rag_similarity=[]
-            all_rc_rag_similarity=[]
-            all_cf_rag_similarity_with_ids=[]
-            all_rc_rag_similarity_with_ids=[]
-            for unit in unit_dict:
-                eval_unit = EvaluationUnit.objects.get(identifier=unit, file=eval_file)
-                eval_unit.linked_feature_ids=[]
-                eval_unit.scores=[]
-                eval_unit.save()
-                sim_list_cf=[]
-                sim_list_rc=[]
-                sim_list_cf_with_ids={}
-                sim_list_rc_with_ids={}
-                sim_list_cf_rag=[]
-                sim_list_rc_rag=[]
-                sim_list_cf_rag_with_ids={}
-                sim_list_rc_rag_with_ids={}
-                for cf in all_code_features:
-                    similarity=cosine_similarity(embedded_cf[cf], embedded_units[unit])
-                    sim_list_cf.append(similarity)
-                    sim_list_cf_with_ids[cf]=similarity
-                    if similarity>=similarity_cutoff:
-                        if cf not in all_linked_code_features:
-                            all_linked_code_features[cf]=[]
-                        all_linked_code_features[cf].append(unit+":"+f"{similarity:.2f}")
-                        
-                        used_code_features.add(cf)
-                        used_unit_for_feature.add(unit)
-                        eval_unit.linked_feature_ids.append(cf)
-                        eval_unit.scores.append(f"{similarity:.2f}")
-                        eval_unit.save()
-                        code_unit = EvaluationUnit.objects.get(identifier=cf, file=code_feature_file)
-                        code_unit.linked_feature_ids.append(unit)
-                        code_unit.scores.append(f"{similarity:.2f}")
-                        code_unit.save()
-                for rc in all_req_f_code:
-                    similarity=cosine_similarity(embedded_rc[rc], embedded_units[unit])
-                    sim_list_rc.append(similarity)
-                    sim_list_rc_with_ids[rc]=similarity
-                    if similarity>=similarity_cutoff:
-                        if rc not in all_linked_req_from_code:
-                            all_linked_req_from_code[rc]=[]
-                        all_linked_req_from_code[rc].append(unit+":"+f"{similarity:.2f}")
-                        
-                        used_req_from_code.add(rc)
-                        used_unit_for_code.add(unit)
-                        eval_unit.linked_feature_ids.append(rc)
-                        eval_unit.scores.append(f"{similarity:.2f}")
-                        eval_unit.save()
-                        code_unit = EvaluationUnit.objects.get(identifier=rc, file=re_from_code_file)
-                        code_unit.linked_feature_ids.append(unit)
-                        code_unit.scores.append(f"{similarity:.2f}")
-                        code_unit.save()
-                for cf in all_code_features_rag:
-                    similarity=cosine_similarity(embedded_cf_rag[cf], embedded_units[unit])
-                    sim_list_cf_rag.append(similarity)
-                    sim_list_cf_rag_with_ids[cf]=similarity
-                    if similarity>=similarity_cutoff:
-                        if cf not in all_linked_code_features_rag:
-                            all_linked_code_features_rag[cf]=[]
-                        all_linked_code_features_rag[cf].append(unit+":"+f"{similarity:.2f}")
-                        
-                        used_code_features_rag.add(cf)
-                        used_unit_for_feature_rag.add(unit)
-                        eval_unit.linked_feature_ids.append(cf)
-                        eval_unit.scores.append(f"{similarity:.2f}")
-                        eval_unit.save()
-                        code_unit = EvaluationUnit.objects.get(identifier=cf, file=code_feature_rag_file)
-                        code_unit.linked_feature_ids.append(unit)
-                        code_unit.scores.append(f"{similarity:.2f}")
-                        code_unit.save()
-                for rc in all_req_f_code_rag:
-                    similarity=cosine_similarity(embedded_rc_rag[rc], embedded_units[unit])
-                    sim_list_rc_rag.append(similarity)
-                    sim_list_rc_rag_with_ids[rc]=similarity
-                    if similarity>=similarity_cutoff:
-                        if rc not in all_linked_req_from_code_rag:
-                            all_linked_req_from_code_rag[rc]=[]
-                        all_linked_req_from_code_rag[rc].append(unit+":"+f"{similarity:.2f}")
-                        
-                        used_req_from_code_rag.add(rc)
-                        used_unit_for_code_rag.add(unit)
-                        eval_unit.linked_feature_ids.append(rc)
-                        eval_unit.scores.append(f"{similarity:.2f}")
-                        eval_unit.save()
-                        code_unit = EvaluationUnit.objects.get(identifier=rc, file=re_from_code_rag_file)
-                        code_unit.linked_feature_ids.append(unit)
-                        code_unit.scores.append(f"{similarity:.2f}")
-                        code_unit.save()
-                sorted_sim_list_cf = sorted(sim_list_cf, reverse=True)
-                sorted_sim_list_rc = sorted(sim_list_rc, reverse=True)
-                all_cf_similarity.append(sorted_sim_list_cf)
-                all_rc_similarity.append(sorted_sim_list_rc)
-                all_cf_similarity_with_ids.append(sim_list_cf_with_ids)
-                all_rc_similarity_with_ids.append(sim_list_rc_with_ids)
-                sorted_sim_list_cf_rag = sorted(sim_list_cf_rag, reverse=True)
-                sorted_sim_list_rc_rag = sorted(sim_list_rc_rag, reverse=True)
-                all_cf_rag_similarity.append(sorted_sim_list_cf_rag)
-                all_rc_rag_similarity.append(sorted_sim_list_rc_rag)
-                all_cf_rag_similarity_with_ids.append(sim_list_cf_rag_with_ids)
-                all_rc_rag_similarity_with_ids.append(sim_list_rc_rag_with_ids)
+    if not variants:
+        for reference_file in reference_files:
+            units = reference_units[reference_file.id]
+            reference_file.f1_score = 0.0
+            reference_file.num_linked_to_feature = 0
+            reference_file.num_units = len(units)
+            reference_file.save(update_fields=["f1_score", "num_linked_to_feature", "num_units"])
+            _write_tsv(
+                _reference_report_path(report_dir, reference_file),
+                [(unit.identifier, unit.description.replace("\n", " "), "[]") for unit in units],
+            )
+        return
 
-            count = EvaluationUnit.objects.filter(linked_feature_ids=[], file=eval_file).count()
-            total_count+=count
-            f1, _, _ = f1_score((len(used_code_features)+len(used_req_from_code)+len(used_code_features_rag)+len(used_req_from_code_rag)), (len(all_code_features)+len(all_req_f_code)+len(all_code_features_rag)+len(all_req_f_code_rag))- (len(used_code_features)+len(used_req_from_code)+len(all_code_features)+len(all_req_f_code)+len(all_code_features_rag)+len(all_req_f_code_rag))- (len(used_code_features_rag)+len(used_req_from_code_rag)), count)
-            eval_file.f1_score=f1
-            eval_file.num_linked_to_feature=len(unit_dict)-count
-            eval_file.num_units=len(unit_dict)
-            eval_file.save()
+    variant_embeddings = {}
+    for name, variant in variant_files.items():
+        descriptions = {unit.identifier: unit.description for unit in variant["units"]}
+        variant_embeddings[name] = get_embeddings(descriptions)
 
-    f1, _, _ = f1_score(len(all_linked_code_features), len(all_code_features) - len(all_linked_code_features), all_units-len(used_unit_for_feature))
-    existing_file = EvaluationFile.objects.filter(project=project, name="Code_Features").first()
-    existing_file.f1_score=f1
-    existing_file.num_linked_to_feature=len(all_linked_code_features)
-    existing_file.num_units=len(all_code_features)
-    existing_file.save()
-    
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Code_Features").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    generated_reqs_file = open(comparison_report_path+"generated_reqs_features.tsv", "w")
-    generated_reqs_file.write("#id\tRequirement\tlinked\n")
-    for feat_req in all_code_feature_reqs:
-        generated_reqs_file.write(feat_req.identifier+"\t"+feat_req.description.replace("\n"," ")+"\t"+str(feat_req.linked_feature_ids)+"\n")
-    generated_reqs_file.close()
+    reference_embeddings = {}
+    for reference_file in reference_files:
+        descriptions = {
+            f"{reference_file.id}:{unit.identifier}": unit.description
+            for unit in reference_units[reference_file.id]
+        }
+        reference_embeddings[reference_file.id] = get_embeddings(descriptions)
 
-    f1, _, _ = f1_score(len(all_linked_req_from_code), len(all_req_f_code) - len(all_linked_req_from_code), all_units-len(used_unit_for_code))
-    existing_file = EvaluationFile.objects.filter(project=project, name="Req_from_code").first()
-    existing_file.f1_score=f1
-    existing_file.num_linked_to_feature=len(all_linked_req_from_code)
-    existing_file.num_units=len(all_req_f_code)
-    existing_file.save()
+    linked_candidates_by_reference = {file.id: set() for file in reference_files}
+    linked_references_by_reference = {file.id: set() for file in reference_files}
+    linked_references_by_variant = {name: set() for name in variant_files}
 
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Req_from_code").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    generated_reqs_file = open(comparison_report_path+"generated_reqs_code.tsv", "w")
-    generated_reqs_file.write("#id\tRequirement\tlinked\n")
-    for feat_req in all_code_feature_reqs:
-        generated_reqs_file.write(feat_req.identifier+"\t"+feat_req.description.replace("\n"," ")+"\t"+str(feat_req.linked_feature_ids)+"\n")
-    generated_reqs_file.close()
+    for reference_file in reference_files:
+        units = reference_units[reference_file.id]
+        embeddings = reference_embeddings[reference_file.id]
+        for variant_name, variant in variant_files.items():
+            candidates = variant["units"]
+            candidate_embeddings = variant_embeddings[variant_name]
+            for candidate in candidates:
+                for reference_unit in units:
+                    reference_key = f"{reference_file.id}:{reference_unit.identifier}"
+                    similarity = cosine_similarity(
+                        candidate_embeddings[candidate.identifier], embeddings[reference_key]
+                    )
+                    if similarity < similarity_cutoff:
+                        continue
 
-    f1, _, _ = f1_score(len(all_linked_code_features_rag), len(all_code_features_rag) - len(all_linked_code_features_rag), all_units-len(used_unit_for_feature_rag))
-    existing_file = EvaluationFile.objects.filter(project=project, name="Code_Features_RAG").first()
-    existing_file.f1_score=f1
-    existing_file.num_linked_to_feature=len(all_linked_code_features_rag)
-    existing_file.num_units=len(all_code_features_rag)
-    existing_file.save()
+                    candidate.linked_feature_ids.append(reference_key)
+                    candidate.scores.append(f"{similarity:.2f}")
+                    reference_unit.linked_feature_ids.append(f"{variant_name}:{candidate.identifier}")
+                    reference_unit.scores.append(f"{similarity:.2f}")
+                    linked_candidates_by_reference[reference_file.id].add((variant_name, candidate.pk))
+                    linked_references_by_reference[reference_file.id].add(reference_key)
+                    linked_references_by_variant[variant_name].add(reference_key)
 
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Code_Features_RAG").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    generated_reqs_file = open(comparison_report_path+"generated_reqs_features_rag.tsv", "w")
-    generated_reqs_file.write("#id\tRequirement\tlinked\n")
-    for feat_req in all_code_feature_reqs:
-        generated_reqs_file.write(feat_req.identifier+"\t"+feat_req.description.replace("\n"," ")+"\t"+str(feat_req.linked_feature_ids)+"\n")
-    generated_reqs_file.close()
-    
+    total_reference_count = sum(len(units) for units in reference_units.values())
+    for variant_name, variant in variant_files.items():
+        candidates = variant["units"]
+        linked_candidate_count = sum(bool(unit.linked_feature_ids) for unit in candidates)
+        false_negative_count = total_reference_count - len(linked_references_by_variant[variant_name])
+        score, _, _ = f1_score(
+            linked_candidate_count,
+            len(candidates) - linked_candidate_count,
+            false_negative_count,
+        )
+        generated_file = variant["file"]
+        generated_file.f1_score = score
+        generated_file.num_linked_to_feature = linked_candidate_count
+        generated_file.num_units = len(candidates)
+        generated_file.save(update_fields=["f1_score", "num_linked_to_feature", "num_units"])
+        _write_tsv(
+            report_dir / variant["report"],
+            [
+                (unit.identifier, unit.description.replace("\n", " "), str(unit.linked_feature_ids))
+                for unit in candidates
+            ],
+        )
+        for unit in candidates:
+            unit.save(update_fields=["linked_feature_ids", "scores"])
 
-    f1, _, _ = f1_score(len(all_linked_req_from_code_rag), len(all_req_f_code_rag) - len(all_linked_req_from_code_rag), all_units-len(used_unit_for_code_rag))
-    existing_file = EvaluationFile.objects.filter(project=project, name="Req_from_code_RAG").first()
-    existing_file.f1_score=f1
-    existing_file.num_linked_to_feature=len(all_linked_req_from_code_rag)
-    existing_file.num_units=len(all_req_f_code_rag)
-    existing_file.save()
+    total_candidate_count = sum(len(variant["units"]) for variant in variant_files.values())
+    for reference_file in reference_files:
+        units = reference_units[reference_file.id]
+        linked_candidates = linked_candidates_by_reference[reference_file.id]
+        linked_references = linked_references_by_reference[reference_file.id]
+        score, _, _ = f1_score(
+            len(linked_candidates),
+            total_candidate_count - len(linked_candidates),
+            len(units) - len(linked_references),
+        )
+        reference_file.f1_score = score
+        reference_file.num_linked_to_feature = len(linked_references)
+        reference_file.num_units = len(units)
+        reference_file.save(update_fields=["f1_score", "num_linked_to_feature", "num_units"])
+        _write_tsv(
+            _reference_report_path(report_dir, reference_file),
+            [
+                (unit.identifier, unit.description.replace("\n", " "), str(unit.linked_feature_ids))
+                for unit in units
+            ],
+        )
+        for unit in units:
+            unit.save(update_fields=["linked_feature_ids", "scores"])
 
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Req_from_code_RAG").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    generated_reqs_file = open(comparison_report_path+"generated_reqs_code_rag.tsv", "w")
-    generated_reqs_file.write("#id\tRequirement\tlinked\n")
-    for feat_req in all_code_feature_reqs:
-        generated_reqs_file.write(feat_req.identifier+"\t"+feat_req.description.replace("\n"," ")+"\t"+str(feat_req.linked_feature_ids)+"\n")
-    generated_reqs_file.close()
-
-    code_feature_file = EvaluationFile.objects.filter(project=project, name="Requirements").first()
-    all_code_feature_reqs = EvaluationUnit.objects.filter(file=code_feature_file)
-    generated_reqs_file = open(comparison_report_path+"reqs_linked.tsv", "w")
-    generated_reqs_file.write("#id\tRequirement\tlinked\n")
-    for feat_req in all_code_feature_reqs:
-        generated_reqs_file.write(feat_req.identifier+"\t"+feat_req.description.replace("\n"," ")+"\t"+str(feat_req.linked_feature_ids)+"\n")
-    generated_reqs_file.close()
-    
 

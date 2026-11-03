@@ -277,6 +277,8 @@ function startPipeline(type) {
   const statusDiv = document.getElementById(`status-${type}`);
   statusDiv.innerText = "Starting analysis...";
 
+  console.log('Starting analysis');
+
   fetch(`/start-analysis/{{ project.id }}/` + type + `/`, { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token }}' } })
     .then(response => response.json())
     .then(data => {

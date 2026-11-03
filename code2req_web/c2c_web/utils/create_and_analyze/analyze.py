@@ -42,7 +42,7 @@ def start_repository_analysis(project):
     graph_file_flat="data/"+project_name+"/ttl-files/output_infomap_flat.ttl"
     graph_db_url=settings.SPARQL_ENDPOINT+project_name
     vector_collection_code, vector_collection_feature,_ = get_vector_collection_names(project_name)
-    
+
     # # 1. Extract and describe ALL code artifacts
     graph, lines_of_code = build_code_repository_graph(repo_dir, settings.GRAPH_URI)
     graph.serialize(graph_file_code_repo, format="turtle") # Storing in case something breaks 
@@ -57,7 +57,7 @@ def start_repository_analysis(project):
     graph.parse(graph_file_flat, format="turtle") 
     join_features(graph, settings.GRAPH_URI, repo_dir, model)
     graph.serialize(graph_file, format="turtle") # Storing in case something breaks 
-
+    
     # 3. Upload model and graph to graphDB
     upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path="data/repoModel.ttl", graph_uri=settings.GRAPH_URI)
     upload_ttl_to_graphdb(repo_url=graph_db_url, ttl_path=graph_file, graph_uri=settings.GRAPH_URI)
@@ -67,7 +67,7 @@ def start_repository_analysis(project):
     graph.parse(graph_file, format="turtle")
     embed_features_desc_code(graph, settings.GRAPH_URI, settings.VECTOR_DB_PATH, vector_collection_code, vector_collection_feature)
     get_stats(graph, Namespace(settings.GRAPH_URI+"#"), project, lines_of_code, repo_dir)
-
+    
 def start_req_analysis(project):
     project_name=project.name
     model=project.model
@@ -85,12 +85,18 @@ def start_req_analysis(project):
     graph = Graph()
     graph.parse(graph_file, format="turtle")
     # Process evaluation docs
-    process_eval_files(project, graph, settings.GRAPH_URI, repo_dir, vector_collection_requirements, settings.VECTOR_DB_PATH, model, top_k, max_tokens, use_rag, use_feature, use_code)
-    # compare
-    compare(project, comparison_report_path)
+    has_reference_requirements = process_eval_files(
+        project, graph, settings.GRAPH_URI, repo_dir, vector_collection_requirements,
+        settings.VECTOR_DB_PATH, model, top_k, max_tokens, use_rag, use_feature, use_code
+    )
+    if has_reference_requirements:
+        compare(project, comparison_report_path)
+    else:
+        print("Skipping requirement comparison: no reference requirements were provided.")
 
 def analyze(project_id, analysis_type):
     project = get_object_or_404(Project, id=project_id)
+
     if analysis_type == 'repository':
         project.repository_analyzed = True
         start_repository_analysis(project)

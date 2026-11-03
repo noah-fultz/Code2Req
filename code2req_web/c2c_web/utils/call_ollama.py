@@ -71,7 +71,7 @@ def safe_ollama_chat(
     format=None,
     tools=None,
     options={'temperature': 0},
-    timeout_seconds=30,
+    timeout_seconds=500,
     retries=3,
     backoff_seconds=30
 ):
@@ -112,7 +112,7 @@ def safe_ollama_chat_tools(
     messages=None,
     format=None,
     options={'temperature': 0},
-    timeout_seconds=30,
+    timeout_seconds=500,
     retries=3,
     backoff_seconds=30,
     tools=None,

@@ -276,145 +276,93 @@ def process_eval_files(project, graph, ex, repo_root, vector_collection_requirem
     example_2=""
     example_3=""
     format=""
-    feature_name_ids = {} 
-    for eval_file in project.evaluation_files.all():
-        if eval_file.name!="Code_Features" and eval_file.name!="Req_from_code" and eval_file.name!="Code_Features_RAG" and eval_file.name!="Req_from_code_RAG":
-            chunks = read_chunks_from_file(eval_file.path, feature_name_ids)
-            client = chromadb.PersistentClient(path=vector_path)
-            delete_collection(client, vector_collection_requirements)
-            collection=get_or_create_collection(client, vector_collection_requirements)
-            print("Made collection")
-            for chunk in chunks:
-                identifier = chunk["id"]
-                if identifier=="example1":
-                    example_1=chunk["description"]
-                elif identifier=="example2":
-                    example_2=chunk["description"]
-                elif identifier=="example3":
-                    example_3=chunk["description"]
-                elif identifier=="format":
-                    format=chunk["description"]
-                else:
-                    existing_unit = EvaluationUnit.objects.filter(file=eval_file, identifier=identifier).first()
-                    if existing_unit:
-                        existing_unit.delete()
-                    original_description = chunk["description"]
+    reference_files = [
+        eval_file for eval_file in project.evaluation_files.all()
+        if eval_file.name not in {"Code_Features", "Req_from_code", "Code_Features_RAG", "Req_from_code_RAG"}
+    ]
+    reference_chunks = []
 
-                    EvaluationUnit.objects.create(
-                        file=eval_file,
-                        identifier=identifier,
-                        description=original_description,
-                        transformed_description="",
-                        score=0.0,
-                        scores=[],
-                        linked_feature_ids=[],
-                        linked_code=chunk["code_artifacts"]
-                    )
-                    add_to_vectordb(collection, original_description, "requirement", identifier, "requirement")
-            
-            req_id=0
-            #########################################
-            # Creating req from fetaures
-            #########################################
-            if use_feature:
-                existing_file = EvaluationFile.objects.filter(project=project, name="Code_Features").first()
-                if existing_file:
-                    existing_units = EvaluationUnit.objects.filter(file=existing_file)
-                    for existing_unit in existing_units:
-                        existing_unit.delete()
-                    existing_file.delete()
-                code_eval = EvaluationFile.objects.create(project=project,name="Code_Features",path="")
-                
-                reqs, related_classes=get_reqs_from_feature(model, top_k, max_tokens, graph, EX, example_1, example_2, example_3, format, vector_collection_requirements, use_rag)
-                
-                
-                for i, abstracted_req in enumerate(reqs):
-                    req_id+=1
-                    EvaluationUnit.objects.create(
-                        file=code_eval,
-                        identifier="feature_req_"+str(req_id),
-                        description=abstracted_req.description,
-                        transformed_description=abstracted_req.description,
-                        score=0.0,
-                        scores=[],
-                        linked_feature_ids=[],
-                        linked_code=[]
-                    )
-            #########################################
-            # Creating req from Code (for evaluation)
-            #########################################
-            if use_code:
-                existing_file = EvaluationFile.objects.filter(project=project, name="Req_from_code").first()
-                if existing_file:
-                    existing_units = EvaluationUnit.objects.filter(file=existing_file)
-                    for existing_unit in existing_units:
-                        existing_unit.delete()
-                    existing_file.delete()
-                code_eval = EvaluationFile.objects.create(project=project,name="Req_from_code",path="")
-                reqs = all_in_context(model, top_k, REPO_ROOT_PATH, example_1, example_2, example_3, format, use_rag, vector_collection_requirements, MAX_TOKENS=max_tokens)
-                for abstracted_req in reqs:
-                    req_id+=1
-                    EvaluationUnit.objects.create(
-                        file=code_eval,
-                        identifier="code_req_"+str(req_id),
-                        description=abstracted_req,
-                        transformed_description=abstracted_req,
-                        score=0.0,
-                        scores=[],
-                        linked_feature_ids=[],
-                        linked_code=[]
-                    )
+    for eval_file in reference_files:
+        EvaluationUnit.objects.filter(file=eval_file).delete()
+        chunks = read_chunks_from_file(eval_file.path, {})
+        for chunk in chunks:
+            identifier = chunk["id"]
+            if identifier == "example1":
+                example_1 = chunk["description"]
+            elif identifier == "example2":
+                example_2 = chunk["description"]
+            elif identifier == "example3":
+                example_3 = chunk["description"]
+            elif identifier == "format":
+                format = chunk["description"]
+            else:
+                EvaluationUnit.objects.create(
+                    file=eval_file,
+                    identifier=identifier,
+                    description=chunk["description"],
+                    transformed_description="",
+                    score=0.0,
+                    scores=[],
+                    linked_feature_ids=[],
+                    linked_code=chunk["code_artifacts"]
+                )
+                reference_chunks.append((identifier, chunk["description"]))
 
-            if rag:
-                use_rag=True
-                #########################################
-                # Creating req from fetaures RAG
-                #########################################
-                if use_feature:
-                    existing_file = EvaluationFile.objects.filter(project=project, name="Code_Features_RAG").first()
-                    if existing_file:
-                        existing_units = EvaluationUnit.objects.filter(file=existing_file)
-                        for existing_unit in existing_units:
-                            existing_unit.delete()
-                        existing_file.delete()
-                    code_eval = EvaluationFile.objects.create(project=project,name="Code_Features_RAG",path="")
-                    
-                    reqs, related_classes=get_reqs_from_feature(model, top_k, max_tokens, graph, EX, example_1, example_2, example_3, format, vector_collection_requirements, use_rag)
-                    
-                    for i, abstracted_req in enumerate(reqs):
-                        req_id+=1
-                        EvaluationUnit.objects.create(
-                            file=code_eval,
-                            identifier="feature_RAG_req_"+str(req_id),
-                            description=abstracted_req.description,
-                            transformed_description=abstracted_req.description,
-                            score=0.0,
-                            scores=[],
-                            linked_feature_ids=[],
-                            # linked_code=related_classes[i]
-                            linked_code=[]
-                        )
-                #########################################
-                # Creating req from Code (for evaluation) RAG
-                #########################################
-                if use_code:
-                    existing_file = EvaluationFile.objects.filter(project=project, name="Req_from_code_RAG").first()
-                    if existing_file:
-                        existing_units = EvaluationUnit.objects.filter(file=existing_file)
-                        for existing_unit in existing_units:
-                            existing_unit.delete()
-                        existing_file.delete()
-                    code_eval = EvaluationFile.objects.create(project=project,name="Req_from_code_RAG",path="")
-                    reqs = all_in_context(model, top_k, REPO_ROOT_PATH, example_1, example_2, example_3, format, use_rag, vector_collection_requirements, MAX_TOKENS=max_tokens)
-                    for abstracted_req in reqs:
-                        req_id+=1
-                        EvaluationUnit.objects.create(
-                            file=code_eval,
-                            identifier="code_RAG_req_"+str(req_id),
-                            description=abstracted_req,
-                            transformed_description=abstracted_req,
-                            score=0.0,
-                            scores=[],
-                            linked_feature_ids=[],
-                            linked_code=[]
-                        )
+    if reference_chunks:
+        client = chromadb.PersistentClient(path=vector_path)
+        delete_collection(client, vector_collection_requirements)
+        collection = get_or_create_collection(client, vector_collection_requirements)
+        for identifier, description in reference_chunks:
+            add_to_vectordb(collection, description, "requirement", identifier, "requirement")
+
+    def replace_generated_file(name, requirements, identifier_prefix):
+        existing_file = EvaluationFile.objects.filter(project=project, name=name).first()
+        if existing_file:
+            existing_file.delete()
+        generated_file = EvaluationFile.objects.create(project=project, name=name, path="")
+        for index, requirement in enumerate(requirements, start=1):
+            description = requirement.description if hasattr(requirement, "description") else requirement
+            EvaluationUnit.objects.create(
+                file=generated_file,
+                identifier=f"{identifier_prefix}_{index}",
+                description=description,
+                transformed_description=description,
+                score=0.0,
+                scores=[],
+                linked_feature_ids=[],
+                linked_code=[]
+            )
+
+    if use_feature:
+        reqs, _ = get_reqs_from_feature(
+            model, top_k, max_tokens, graph, EX, example_1, example_2,
+            example_3, format, vector_collection_requirements, False
+        )
+        replace_generated_file("Code_Features", reqs, "feature_req")
+
+    if use_code:
+        reqs = all_in_context(
+            model, top_k, REPO_ROOT_PATH, example_1, example_2, example_3,
+            format, False, vector_collection_requirements, MAX_TOKENS=max_tokens
+        )
+        replace_generated_file("Req_from_code", reqs, "code_req")
+
+    has_reference_requirements = bool(reference_chunks)
+    if rag and has_reference_requirements:
+        if use_feature:
+            reqs, _ = get_reqs_from_feature(
+                model, top_k, max_tokens, graph, EX, example_1, example_2,
+                example_3, format, vector_collection_requirements, True
+            )
+            replace_generated_file("Code_Features_RAG", reqs, "feature_RAG_req")
+
+        if use_code:
+            reqs = all_in_context(
+                model, top_k, REPO_ROOT_PATH, example_1, example_2, example_3,
+                format, True, vector_collection_requirements, MAX_TOKENS=max_tokens
+            )
+            replace_generated_file("Req_from_code_RAG", reqs, "code_RAG_req")
+    elif rag:
+        print("Skipping RAG requirement generation: no reference requirements are available for retrieval.")
+
+    return has_reference_requirements
