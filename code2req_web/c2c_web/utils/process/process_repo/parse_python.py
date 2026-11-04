@@ -4,9 +4,11 @@ from rdflib import URIRef
 
 # === EXTRACT CODE ARTIFACTS ===
 def extract_code_artifacts_python(tree, code_bytes):
+    ''' Converts a slice of code bytes back into their plaintext form '''
     def node_text(node):
         return code_bytes[node.start_byte:node.end_byte].decode()
 
+    ''' Discovers the name of a node's identifier, defaults to "unknown" '''
     def get_name(node):
         for child in node.children:
             if child.type == "identifier":
@@ -19,28 +21,40 @@ def extract_code_artifacts_python(tree, code_bytes):
     snippets = []
     snippetindex=0
 
+    # Iterate through the root node's children
     for node in root.children:
+        # Append class definitions directly to the artifact list
         if node.type == "class_definition":
             artifacts.append(("Class", node_text(node), get_name(node)))
+        # Append function definitions directly to the artifact list
         elif node.type == "function_definition":
             artifacts.append(("Function", node_text(node), get_name(node)))
+        # Append imports into their dedicated import list
         elif node.type in ("import_statement", "import_from_statement", "future_import_statement"):
             imports.append(node_text(node))
+        # Append conditional statements to the artifact list
         elif node.type in ("if_statement", "for_statement", "while_statement", "try_statement", "with_statement", "match_statement"):
-            snippetindex+=1
+            snippetindex += 1
             artifacts.append(("Snippet", node_text(node), "snippet_"+str(snippetindex)))
-        elif node.type !="comment":
+        # Push any other non-commented code into a dedicated snippet list
+        elif node.type != "comment":
             snippets.append(node_text(node))
     
+    # Insert all snippets as a single block into the artifact list
     if snippets:
         snippet_block = "\n".join(snippets)
         artifacts.insert(0, ("Snippet", snippet_block, "snippet_0"))
 
+    # Insert all imports as a single block into the artifact list
     if imports:
         import_block = "\n".join(imports)
         artifacts.insert(0, ("Imports", import_block, "imports"))
 
+    # Return the assembled list of artifact nodes
     return artifacts
+
+
+
 
 def resolve_import_to_path(import_path: str, project_root: Path, BASE_URI) -> str:
     if import_path.startswith(".."):
@@ -53,6 +67,9 @@ def resolve_import_to_path(import_path: str, project_root: Path, BASE_URI) -> st
         return_path=str(p).replace(str(project_root),"")
     return_path=f"{BASE_URI}{return_path}"
     return return_path
+
+
+
 
 def extract_from_import_python(root, code, graph, import_references, REPO_ROOT_PATH, BASE_URI, EX):
     for node in root.children:
@@ -82,6 +99,7 @@ def extract_from_import_python(root, code, graph, import_references, REPO_ROOT_P
                     for a in artifacts:
                         import_references[a.split("#")[-1]]=a
     return import_references
+
 
 
 

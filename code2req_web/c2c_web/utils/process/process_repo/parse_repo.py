@@ -3,21 +3,22 @@ from tree_sitter import Language, Parser
 from rdflib import Graph, Namespace, URIRef, Literal, RDF
 import tree_sitter_python as tspython
 import tree_sitter_java as tsjava
-# TODO: Add tree_sitter_c
+import tree_sitter_c as tsc
 from c2c_web.utils.utils import get_code_artifacts_for_file
 from c2c_web.utils.process.process_repo.parse_python import extract_code_artifacts_python, extract_from_import_python, add_references_python
 from c2c_web.utils.process.process_repo.parse_java import extract_code_artifacts_java, extract_from_import_java, add_references_java
-# TODO: Add c2c_web.utils.process.process_repo.parse_c
+from c2c_web.utils.process.process_repo.parse_c import extract_code_artifacts_c
 
 # === SETUP TREE-SITTER ===
 PY_LANGUAGE = Language(tspython.language())
 JAVA_LANGUAGE = Language(tsjava.language())
+C_LANGUAGE = Language(tsc.language())
 
 # === NAMESPACES ===
 EX = None # to be set dynamically
 BASE_URI = None # to be set dynamically
 REPO_ROOT_PATH = None  # to be set dynamically
-lines_of_code=0
+lines_of_code = 0
 
 # === RDF GRAPH ===
 '''
@@ -77,7 +78,9 @@ def process_file(graph, file_path, dir_uri, lang_prefix, parser):
     # Handle Java source code
     elif lang_prefix == ".java":
         artifacts = extract_code_artifacts_java(tree, code_bytes)
-    # TODO: Add C processing
+    # Handle C source and header files
+    elif lang_prefix == ".c" or lang_prefix == ".h":
+        artifacts = extract_code_artifacts_c(tree, code_bytes)
 
     artifact_uris = []
     # Iterate over each artifact extracted from the list
@@ -134,7 +137,10 @@ def process_directory(graph, dir_path, parent_uri=None):
         elif entry.suffix == ".java":
             parser = Parser(JAVA_LANGUAGE)
             process_file(graph, entry, dir_uri, ".java", parser)
-        # TODO: Add C processing
+        # If the entry is a C source or header fiel, parse it using the C file processor
+        elif entry.suffix == ".c" or entry.suffix == ".h":
+            parser = Parser(C_LANGUAGE)
+            process_file(graph, entry, dir_uri, entry.suffix, parser)
 
 '''
 * Pulls the source code associated with an artifact
@@ -166,6 +172,8 @@ def process_call_stack(graph, REPO_ROOT_PATH):
             parser = Parser(JAVA_LANGUAGE)
             lang = ".java"
         # TODO: Add C processing
+        elif file_uri.endswith(".c") or file_uri.endswith(".h"):
+            raise ValueError("C-language file encountered")
 
         import_references = {}
         # Iterate through each artifact in the file and build a named artifact lookup
