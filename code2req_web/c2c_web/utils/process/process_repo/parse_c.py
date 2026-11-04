@@ -133,10 +133,48 @@ def extract_code_artifacts_c(tree, code_bytes):
     return artifacts
 
 
-# TODO: resolve_import_to_path_c
+def resolve_import_to_path_c(import_path, file_uri, project_root, BASE_URI):
+    base_path = "/".join(file_uri.replace(f"{BASE_URI}/", "").split("/")[:-1])
+    return f"{project_root}/{base_path}/{import_path}"
 
 
-# TODO: extract_from_import_c
+'''
+* Builds or extends a lookup table that matches names to C artifacts
+* @param root - The root of the import block's syntax tree
+* @param code - The byte-digested aggregated import block
+* @param graph - The repository relationship graph
+* @param import_references - A mutable dictionary to be initialized or extended
+* @param REPO_ROOT_PATH - The root of the cached repository
+* @param BASE_URI - The URI base for the graph-based repo representation
+* @param EX - The repo's vocabulary namespace
+'''
+def extract_from_import_c(file_uri, root, code, graph, import_references, REPO_ROOT_PATH, BASE_URI, EX):
+    def node_text(node):
+        return code[node.start_byte:node.end_byte].decode()
+
+    # Iterate through the top-level children of the import block
+    for node in root.children:
+        # Ignore all non-include declarations
+        if node.type != "preproc_include":
+            continue
+
+        path_node = node.child_by_field_name("path")
+        # Check whether it's a quoted or bracketed import
+        is_quoted = path_node.type == "string_literal"
+
+        # TODO: Handle quoted imports
+        if is_quoted:
+            import_text = node_text(path_node).strip("\n\t\"")
+            print(f"import {import_text} is quoted")
+            recovered_path = resolve_import_to_path_c(import_text, file_uri, REPO_ROOT_PATH, BASE_URI)
+            print(f"  => resolved to \"{recovered_path}\"")
+        # TODO: Handle bracketed imports
+        else:
+            print(f"import {node_text(path_node).strip()} is not quoted")
+        
+        print()
+
+    return import_references
 
 
 # TODO: add_references_c

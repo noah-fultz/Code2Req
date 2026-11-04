@@ -61,11 +61,11 @@ def resolve_import_to_path(import_path: str, project_root: Path, BASE_URI) -> st
         import_path=import_path[2:]
     elif import_path.startswith("."):
         import_path=import_path[1:]
-    path = list(project_root.rglob(import_path.replace(".","/")+".py"))
-    return_path=""
+    path = list(project_root.rglob(import_path.replace(".", "/")+".py"))
+    return_path = ""
     for p in path:
-        return_path=str(p).replace(str(project_root),"")
-    return_path=f"{BASE_URI}{return_path}"
+        return_path = str(p).replace(str(project_root), "")
+    return_path = f"{BASE_URI}{return_path}"
     return return_path
 
 

@@ -7,7 +7,7 @@ import tree_sitter_c as tsc
 from c2c_web.utils.utils import get_code_artifacts_for_file
 from c2c_web.utils.process.process_repo.parse_python import extract_code_artifacts_python, extract_from_import_python, add_references_python
 from c2c_web.utils.process.process_repo.parse_java import extract_code_artifacts_java, extract_from_import_java, add_references_java
-from c2c_web.utils.process.process_repo.parse_c import extract_code_artifacts_c
+from c2c_web.utils.process.process_repo.parse_c import extract_code_artifacts_c, extract_from_import_c
 
 # === SETUP TREE-SITTER ===
 PY_LANGUAGE = Language(tspython.language())
@@ -166,31 +166,37 @@ def process_call_stack(graph, REPO_ROOT_PATH):
         # If the file is a Python file, set the proper parser and extension 
         if file_uri.endswith(".py"):
             parser = Parser(PY_LANGUAGE)
-            lang = ".py"
+            lang = "python"
         # If the file is a Java file, set the proper parser and extension
         elif file_uri.endswith(".java"):
             parser = Parser(JAVA_LANGUAGE)
-            lang = ".java"
-        # TODO: Add C processing
+            lang = "java"
+        # If the file is a C source or header file, set the proper parser and extension
         elif file_uri.endswith(".c") or file_uri.endswith(".h"):
-            raise ValueError("C-language file encountered")
+            parser = Parser(C_LANGUAGE)
+            lang = "c"
 
         import_references = {}
         # Iterate through each artifact in the file and build a named artifact lookup
         for artifact in get_code_artifacts_for_file(file_uri, graph, EX):
-            # Check if the artifact is an import
+            # Check if the artifact is the import block
             if artifact.endswith("imports"):
-                # Pull and parse the artifact's source
+                # Pull and parse the plaintext of the import block
                 imports = get_code(artifact, graph)
                 tree = parser.parse(imports.encode())
                 
                 # If it's Python, dispatch the import resolution to the Python extractor
-                if lang == ".py":
-                    import_references = extract_from_import_python(tree.root_node, imports.encode(),graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
+                if lang == "python":
+                    import_references = extract_from_import_python(tree.root_node, imports.encode(), graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
                 # If it's Java, dispatch the import resolution to the Java extractor
-                elif lang == ".java":
-                    import_references = extract_from_import_java(artifact,tree.root_node, imports.encode(),graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
-                # TODO: Add C processing
+                elif lang == "java":
+                    import_references = extract_from_import_java(artifact, tree.root_node, imports.encode(), graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
+                # If it's C, dispatch the import resolution to the C extractor
+                elif lang == "c":
+                    print("Processing imports")
+                    print("============================================================")
+                    import_references = extract_from_import_c(file_uri, tree.root_node, imports.encode(), graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
+                    print("============================================================\n")
 
             # If the artifact is not an import, store it as a named artifact for reference in later import checks
             else:
@@ -205,12 +211,15 @@ def process_call_stack(graph, REPO_ROOT_PATH):
                 tree = parser.parse(code.encode())
                 
                 # If it's Python, dispatch reference resolution
-                if lang == ".py":
+                if lang == "python":
                     add_references_python(tree.root_node, code.encode(), import_references, artifact, graph, EX)
                 # If it's Java, dispatch reference resolution
-                if lang == ".java":
+                elif lang == "java":
                     add_references_java(tree.root_node, code.encode(), import_references, artifact, graph, EX)
                 # TODO: Add C processing
+                elif lang == "c":
+                    raise ValueError("C-language file encountered")
+
 
 
 # === MAIN FUNCTION ===

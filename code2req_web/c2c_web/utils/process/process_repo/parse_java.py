@@ -201,14 +201,28 @@ def resolve_import_to_path_java(import_path: str, project_root: Path, BASE_URI: 
 
 
 
-
+'''
+* Builds part of an import lookup table from names to Java artifacts
+* @param artifact - The current artifact being unpackedz
+* @param root - The root of the Java syntax tree
+* @param code - The byte-digested aggregated import block
+* @param graph - The repository relationship graph
+* @param import_references - A mutable dictionary to be initialized or extended
+* @param REPO_ROOT_PATH - The root of the cached repository
+* @param BASE_URI - The URI base for the graph-based repo representation
+* @param EX - The repo's vocabulary namespace
+'''
 def extract_from_import_java(artifact, root, code, graph, import_references, REPO_ROOT_PATH, BASE_URI, EX):
+    # Iterate through the top-level children of the file root
     for node in root.children:
+        # Ignore all non-import declarations
         if node.type != "import_declaration":
             continue
 
+        # Extract the import statement as plaintext
         import_text = code[node.start_byte:node.end_byte].decode().strip().rstrip(";")
         is_static = "static " in import_text
+        # Extract the path from the import statement
         import_path = import_text.replace("import", "").replace("static", "").strip()
 
         # --- 1. Static wildcard import ---
@@ -257,7 +271,7 @@ def extract_from_import_java(artifact, root, code, graph, import_references, REP
 
     # --- 5. Add implicit imports from same package ---
     # Try to find which file this code belongs to
-    package_prefix="/".join(artifact.split("/")[:-1])
+    package_prefix = "/".join(artifact.split("/")[:-1])
     for file_uri in graph.subjects(RDF.type, EX.CodeFile):
         if str(file_uri).startswith(package_prefix):
             for artifact in get_code_artifacts_for_file(file_uri, graph, EX):
