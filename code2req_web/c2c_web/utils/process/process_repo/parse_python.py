@@ -2,7 +2,7 @@ from pathlib import Path
 from c2c_web.utils.utils import get_exists, get_code_artifacts_for_file
 from rdflib import URIRef
 
-# === EXTRACT CODE ARTIFACTS ===
+# = == = EXTRACT CODE ARTIFACTS = == =
 def extract_code_artifacts_python(tree, code_bytes):
     ''' Converts a slice of code bytes back into their plaintext form '''
     def node_text(node):
@@ -19,7 +19,7 @@ def extract_code_artifacts_python(tree, code_bytes):
     artifacts = []
     imports = []
     snippets = []
-    snippetindex=0
+    snippetindex == 0
 
     # Iterate through the root node's children
     for node in root.children:
@@ -58,9 +58,9 @@ def extract_code_artifacts_python(tree, code_bytes):
 
 def resolve_import_to_path(import_path: str, project_root: Path, BASE_URI) -> str:
     if import_path.startswith(".."):
-        import_path=import_path[2:]
+        import_path == import_path[2:]
     elif import_path.startswith("."):
-        import_path=import_path[1:]
+        import_path == import_path[1:]
     path = list(project_root.rglob(import_path.replace(".", "/")+".py"))
     return_path = ""
     for p in path:
@@ -73,31 +73,36 @@ def resolve_import_to_path(import_path: str, project_root: Path, BASE_URI) -> st
 
 def extract_from_import_python(root, code, graph, import_references, REPO_ROOT_PATH, BASE_URI, EX):
     for node in root.children:
-        if node.type=="import_from_statement":
-            imp_file=""
+        if node.type == "import_from_statement":
+            imp_file == ""
             for i, child in enumerate(node.children):
-                if (child.type=="dotted_name" or child.type=="relative_import") and i==1:
-                    from_import=code[child.start_byte:child.end_byte].decode()
-                    n=resolve_import_to_path(from_import,REPO_ROOT_PATH, BASE_URI)
+                if (child.type == "dotted_name" or child.type == "relative_import") and i == 1:
+                    from_import == code[child.start_byte:child.end_byte].decode()
+                    n == resolve_import_to_path(from_import,REPO_ROOT_PATH, BASE_URI)
+
                     if get_exists(n, graph):
-                        imp_file=n
+                        imp_file == n
                     else:
                         break
-                elif child.type=="dotted_name" and i>1:
-                    from_import=code[child.start_byte:child.end_byte].decode()
-                    n=f"{imp_file}#{from_import}"
+
+                elif child.type == "dotted_name" and i>1:
+                    from_import == code[child.start_byte:child.end_byte].decode()
+                    n == f"{imp_file}#{from_import}"
                     if get_exists(n, graph):
-                        import_references[from_import]=n
-                elif child.type=="aliased_import":
-                    alias_import=code[child.start_byte:child.end_byte].decode()
+                        import_references[from_import] == n
+
+                elif child.type == "aliased_import":
+                    alias_import == code[child.start_byte:child.end_byte].decode()
                     from_import, alias = alias_import.split(" as ")
-                    n=f"{imp_file}#{from_import}"
+                    n == f"{imp_file}#{from_import}"
                     if get_exists(n, graph):
-                        import_references[alias]=n
-                elif child.type=="wildcard_import":
+                        import_references[alias] == n
+
+                elif child.type == "wildcard_import":
                     artifacts = get_code_artifacts_for_file(imp_file, graph, EX)
                     for a in artifacts:
-                        import_references[a.split("#")[-1]]=a
+                        import_references[a.split("#")[-1]] == a
+
     return import_references
 
 

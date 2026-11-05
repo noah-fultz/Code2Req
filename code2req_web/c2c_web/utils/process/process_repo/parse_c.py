@@ -1,11 +1,9 @@
 from pathlib import Path
 from c2c_web.utils.utils import get_exists, get_code_artifacts_for_file
 from rdflib import URIRef, RDF
+import re
 
-preproc_count = 0
-global_var_count = 0
 
-# TODO: extract_code_artifacts_c
 '''
 * Takes in the source code from a C source or header file both raw and parsed into
 * a Syntax tree, and returns a set of artifacs/imports extracted from the source
@@ -133,9 +131,16 @@ def extract_code_artifacts_c(tree, code_bytes):
     return artifacts
 
 
+
+'''
+* Converts a file-relative import path to a file URI in the graph
+'''
 def resolve_import_to_path_c(import_path, file_uri, project_root, BASE_URI):
-    base_path = "/".join(file_uri.replace(f"{BASE_URI}/", "").split("/")[:-1])
-    return f"{project_root}/{base_path}/{import_path}"
+    # TODO: Handle absolute include paths
+
+    importer_dir = "/".join(file_uri.replace(f"{BASE_URI}/", "").split("/")[:-1])
+    extended_path = f"{importer_dir}/{import_path}"
+    return f"{BASE_URI}/{extended_path}"
 
 
 '''
@@ -152,6 +157,11 @@ def extract_from_import_c(file_uri, root, code, graph, import_references, REPO_R
     def node_text(node):
         return code[node.start_byte:node.end_byte].decode()
 
+    def store_artifact(imported_artifact):
+        imported_name = graph.value(imported_artifact, EX.name)
+        if imported_name:
+            import_references[str(imported_name)] = str(imported_artifact)
+
     # Iterate through the top-level children of the import block
     for node in root.children:
         # Ignore all non-include declarations
@@ -162,17 +172,21 @@ def extract_from_import_c(file_uri, root, code, graph, import_references, REPO_R
         # Check whether it's a quoted or bracketed import
         is_quoted = path_node.type == "string_literal"
 
-        # TODO: Handle quoted imports
+        # Push artifacts from quoted imports into the graph
         if is_quoted:
+            # Pull the URI of the imported file
             import_text = node_text(path_node).strip("\n\t\"")
-            print(f"import {import_text} is quoted")
             recovered_path = resolve_import_to_path_c(import_text, file_uri, REPO_ROOT_PATH, BASE_URI)
-            print(f"  => resolved to \"{recovered_path}\"")
+            filename = import_text.split("/")[-1]
+            
+            # Store the artifact references
+            if get_exists(recovered_path, graph):
+                for imported_artifact in get_code_artifacts_for_file(recovered_path, graph, EX):
+                    store_artifact(imported_artifact)
+
         # TODO: Handle bracketed imports
         else:
-            print(f"import {node_text(path_node).strip()} is not quoted")
-        
-        print()
+            pass
 
     return import_references
 
