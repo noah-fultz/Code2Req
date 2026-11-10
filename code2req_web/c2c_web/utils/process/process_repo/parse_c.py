@@ -104,6 +104,10 @@ def extract_code_artifacts_c(tree, code_bytes):
                 # Push the function into the artifact list
                 inner_artifacts.append(("Class", node_text(child), struct_name))
 
+            # TODO: Handle type_identifier
+
+            # TODO: Handle union_specifier and enum_specifier
+
             # Ignore comment lines
             elif child.type == "comment":
                 pass
@@ -140,7 +144,7 @@ def resolve_import_to_path_c(import_path, file_uri, project_root, BASE_URI):
 
     importer_dir = "/".join(file_uri.replace(f"{BASE_URI}/", "").split("/")[:-1])
     extended_path = f"{importer_dir}/{import_path}"
-    return f"{BASE_URI}/{extended_path}"
+    return str(Path(f"{BASE_URI}/{extended_path}").resolve())
 
 
 '''
@@ -177,7 +181,6 @@ def extract_from_import_c(file_uri, root, code, graph, import_references, REPO_R
             # Pull the URI of the imported file
             import_text = node_text(path_node).strip("\n\t\"")
             recovered_path = resolve_import_to_path_c(import_text, file_uri, REPO_ROOT_PATH, BASE_URI)
-            filename = import_text.split("/")[-1]
             
             # Store the artifact references
             if get_exists(recovered_path, graph):
@@ -191,4 +194,53 @@ def extract_from_import_c(file_uri, root, code, graph, import_references, REPO_R
     return import_references
 
 
-# TODO: add_references_c
+
+'''
+* Adds reference relationships between nodes in the graph to establish dependencies on
+* a given artifact
+* @param node - The root of the current code subtree being connected
+* @param code - The byte-code of the code being analyzed
+* @param import_references - The artifact-to-file lookup table
+* @param this - The artifact whose dependencies are being mapped
+* @param graph - The repository's dependency graph
+* @param EX - The vocabulary namespace
+'''
+def add_references_c(node, code, import_references, this, graph, EX): # TODO: Name it something that's not 'this'
+    def node_text(code_node):
+        return code[code_node.start_byte:code_node.end_byte].decode().strip()
+
+    # Recursively build dependencies in this node's children
+    for child in node.children:
+        add_references_c(child, code, import_references, this, graph, EX)
+
+    # TODO: Handle scoped nodes, involves updating artifact names
+
+    # Match identifiers (e.g. function name, variable, etc.)
+    if node.type == "identifier":
+        name = node_text(node)
+        if name in import_references and import_references[name] != this:
+            graph.add((URIRef(this), EX.usesArtifact, URIRef(import_references[name])))
+
+    # Match a function call expression
+    elif node.type == "call_expression":
+        pass
+        # TODO: Update this to handle function pointers, lambda, etc.,
+
+    # Match a struct or type identifier
+    elif node.type == "type_identifier": # or node.type == "struct_specifier":
+        # name = node_text(node.child_by_field_name("name")) if node.type == "struct_specifier" else node_text(node)
+        name = node_text(node)
+        if name in import_references and import_references[name] != this:
+            graph.add((URIRef(this), EX.usesArtifact, URIRef(import_references[name])))
+
+    # Match a field_expression
+    elif node.type == "field_expression":
+        pass
+
+    # Match a preprocessing definition
+    elif node.type == "preproc_def" or node.type == "preproc_function_def":
+        pass
+
+    # TODO: Extract union_specifier and enum_specifier
+    elif node.type == "union_specifier" or node.type == "enum_specifier":
+        pass

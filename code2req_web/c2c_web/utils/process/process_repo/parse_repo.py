@@ -7,7 +7,7 @@ import tree_sitter_c as tsc
 from c2c_web.utils.utils import get_code_artifacts_for_file
 from c2c_web.utils.process.process_repo.parse_python import extract_code_artifacts_python, extract_from_import_python, add_references_python
 from c2c_web.utils.process.process_repo.parse_java import extract_code_artifacts_java, extract_from_import_java, add_references_java
-from c2c_web.utils.process.process_repo.parse_c import extract_code_artifacts_c, extract_from_import_c
+from c2c_web.utils.process.process_repo.parse_c import extract_code_artifacts_c, extract_from_import_c, add_references_c
 
 # === SETUP TREE-SITTER ===
 PY_LANGUAGE = Language(tspython.language())
@@ -193,16 +193,14 @@ def process_call_stack(graph, REPO_ROOT_PATH):
                     import_references = extract_from_import_java(artifact, tree.root_node, imports.encode(), graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
                 # If it's C, dispatch the import resolution to the C extractor
                 elif lang == "c":
-                    print("Processing imports")
-                    print("============================================================")
                     import_references = extract_from_import_c(file_uri, tree.root_node, imports.encode(), graph, import_references, REPO_ROOT_PATH, BASE_URI, EX)
-                    print("============================================================\n")
 
             # If the artifact is not an import, store it as a named artifact for reference in later import checks
             else:
                 import_references[artifact.split("#")[-1]] = artifact
         
         # Parse each non-import artifact and use the lookup to resolve relationships
+        counter = 0
         for artifact in get_code_artifacts_for_file(file_uri, graph, EX):
             # Ensure this is not an import
             if artifact.endswith("imports") == False:
@@ -218,7 +216,7 @@ def process_call_stack(graph, REPO_ROOT_PATH):
                     add_references_java(tree.root_node, code.encode(), import_references, artifact, graph, EX)
                 # TODO: Add C processing
                 elif lang == "c":
-                    raise ValueError("C-language file encountered")
+                    add_references_c(tree.root_node, code.encode(), import_references, artifact, graph, EX)
 
 
 

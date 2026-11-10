@@ -288,7 +288,7 @@ def add_references_java(node, code, import_references, this, graph, EX):
     for child in node.children:
         add_references_java(child, code, import_references, this, graph, EX)
 
-        # Handle parent class/interface references
+    # Handle parent class/interface references
     if node.type == "class_declaration":
         for child in node.children:
             if child.type in ("superclass", "super_interfaces"):

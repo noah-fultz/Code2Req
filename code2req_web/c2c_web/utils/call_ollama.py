@@ -71,7 +71,7 @@ def safe_ollama_chat(
     format=None,
     tools=None,
     options={'temperature': 0},
-    timeout_seconds=500,
+    timeout_seconds=2400,
     retries=3,
     backoff_seconds=30
 ):
@@ -84,6 +84,10 @@ def safe_ollama_chat(
     for attempt in range(1, retries + 1):
         ctx = multiprocessing.get_context("spawn")  # More robust on Windows
         with ctx.Pool(processes=1) as pool:
+            print("\n\n")
+            print(json.dumps(messages, indent=2))
+            print("\n\n")
+
             result = pool.apply_async(
                 ollama_call_worker, 
                 (model, messages, format, tools, options)
