@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Custom project constants
 SPARQL_ENDPOINT = "http://graphdb:7200/repositories/"
@@ -21,6 +22,19 @@ PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 """
 VECTOR_DB_PATH = "chroma_DB"
 OPENAI_KEY="your-api-key-here"
+
+# Repository feature calls are budgeted separately from requirement generation.
+REPOSITORY_FEATURE_INPUT_TOKEN_LIMIT = int(os.getenv("REPOSITORY_FEATURE_INPUT_TOKEN_LIMIT", "4096"))
+REPOSITORY_FEATURE_CONTEXT_TOKENS = int(os.getenv("REPOSITORY_FEATURE_CONTEXT_TOKENS", "8192"))
+REPOSITORY_FEATURE_OUTPUT_TOKENS = int(os.getenv("REPOSITORY_FEATURE_OUTPUT_TOKENS", "1024"))
+REPOSITORY_FEATURE_SAFETY_MARGIN_TOKENS = int(
+    os.getenv("REPOSITORY_FEATURE_SAFETY_MARGIN_TOKENS", "512")
+)
+REPOSITORY_FEATURE_TOKENIZER_JSON = os.getenv("REPOSITORY_FEATURE_TOKENIZER_JSON", "")
+REPOSITORY_FEATURE_TOKENIZER_MODEL = os.getenv("REPOSITORY_FEATURE_TOKENIZER_MODEL", "")
+REPOSITORY_FEATURE_REQUIRE_MODEL_TOKENIZER = os.getenv(
+    "REPOSITORY_FEATURE_REQUIRE_MODEL_TOKENIZER", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent

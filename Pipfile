@@ -21,6 +21,7 @@ scikit-learn = "*"
 pandas = "*"
 networkx = "*"
 tiktoken = "*"
+tokenizers = "==0.23.3"
 openai = "*"
 matplotlib = "*"
 

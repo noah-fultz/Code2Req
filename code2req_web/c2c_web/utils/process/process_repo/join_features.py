@@ -3,9 +3,18 @@ import hashlib
 import re
 from rdflib import RDF, Graph, Literal, URIRef, Namespace
 from ollama import chat
-from c2c_web.utils.prompts import Feature, get_tag_features_sys_prompt, get_tag_features_user_prompt
+from c2c_web.utils.prompts import Feature
 from c2c_web.utils.utils import cosine_similarity as cos, embed
 from c2c_web.utils.call_ollama import safe_ollama_chat
+from c2c_web.utils.process.process_repo.feature_generation import (
+    FeatureReductionError,
+    check_feature_prompt_budget,
+    get_feature_generation_options,
+    get_feature_prompt_budget,
+    log_feature_response_telemetry,
+    render_feature_messages,
+    summarize_bounded,
+)
 from rdflib import RDF
 
 import pickle
@@ -138,6 +147,9 @@ def similarity_to_infomap_edges(
 
 def run_infomap_on_similarity(edges, feature_ids, num_clusters):
     """Run Infomap on a weighted edge list and return cluster mapping."""
+    if not edges:
+        return {}
+
     infomap = Infomap(silent=True, directed=False)
 
     for src, tgt, weight in edges:
@@ -151,11 +163,27 @@ def run_infomap_on_similarity(edges, feature_ids, num_clusters):
 
     return clusters
 
-def get_description(all_desc, type, model):
-    messages=[{'role': 'system', 'content': get_tag_features_sys_prompt(type)}]
-    messages.append({'role': 'user', 'content': get_tag_features_user_prompt(str(all_desc))})
-    response = safe_ollama_chat(model=model,messages=messages,format=Feature)
-    feature = Feature.model_validate_json(response.message.content)
+def get_description(all_desc, type, model, stage="join", budget=None):
+    messages = render_feature_messages(all_desc, type)
+    check_feature_prompt_budget(messages, model, stage, budget=budget)
+    response = safe_ollama_chat(
+        model=model,
+        messages=messages,
+        format=Feature,
+        options=get_feature_generation_options(budget),
+    )
+    if response is None or not getattr(response, "message", None):
+        raise FeatureReductionError(f"Ollama returned no response during {stage} feature generation")
+    log_feature_response_telemetry(response, model, stage)
+    content = getattr(response.message, "content", None)
+    if not content:
+        raise FeatureReductionError(f"Ollama returned empty content during {stage} feature generation")
+    try:
+        feature = Feature.model_validate_json(content)
+    except Exception as error:
+        raise FeatureReductionError(
+            f"Ollama returned an invalid Feature during {stage} feature generation"
+        ) from error
     similarity = cos(embed(" ".join(str(v) for v in all_desc.values()))[0], embed(feature.description)[0])
     print(f"Semantic similarity: {similarity:.4f}")
     return feature, similarity
@@ -171,7 +199,7 @@ def upload_features_to_graph(graph: Graph, feature, score, members, level, EX:Na
     feature_uri = URIRef(f"{BASE_URI}#{feature_id}")
     graph.add((feature_uri, EX.name, Literal(feature.name)))
     graph.add((feature_uri, EX.description, Literal(feature.description)))
-    graph.add((feature_uri, EX.score, Literal(f"Cosine similarity on embeddings: {score:.4f}")))
+    graph.add((feature_uri, EX.score, Literal(f"Mean cosine similarity across bounded feature calls: {score:.4f}")))
     graph.add((feature_uri, EX.level, Literal(str(level))))
     graph.add((feature_uri, RDF.type, EX.Feature))
     for artifact_uri in members:
@@ -179,12 +207,21 @@ def upload_features_to_graph(graph: Graph, feature, score, members, level, EX:Na
     return str(feature_uri)
 
 
-def join_features(graph, ex, repo_root, model):
+def join_features(graph, ex, repo_root, model, feature_budget=None):
+    feature_budget = feature_budget or get_feature_prompt_budget()
     EX = Namespace(ex+"#")
     REPO_ROOT_PATH = Path(repo_root).resolve()
     BASE_URI = f"http://example.org/{REPO_ROOT_PATH.name}"
 
     feature_descriptions = get_all_features(graph, EX)
+    if not feature_descriptions:
+        print("No features to join")
+        return None
+    if len(feature_descriptions) == 1:
+        only_feature = next(iter(feature_descriptions))
+        print("One feature found; skipping redundant join and root summaries")
+        return only_feature
+
     feature_embeddings = get_feature_embeddings(feature_descriptions)
     num_clusters=len(feature_descriptions)/5
     shortest_paths=feature_shortest_paths(graph, feature_descriptions, EX)
@@ -204,14 +241,34 @@ def join_features(graph, ex, repo_root, model):
                 all_desc[f]=feature_descriptions[f]
         total_nodes+=len(members)
 
-        feature, similarity = get_description(all_desc, "Features", model)
+        feature, similarity = summarize_bounded(
+            all_desc,
+            "Features",
+            model,
+            f"join-group-{cid}",
+            lambda payload, mode, selected_model, stage: get_description(
+                payload, mode, selected_model, stage, feature_budget
+            ),
+            budget=feature_budget,
+        )
         feature_id = upload_features_to_graph(graph, feature, similarity, members, 1, EX, BASE_URI)
         descs_for_top_level[feature_id]=feature.name+": "+feature.description
     
     for f in feature_descriptions:
         if f not in used_features:
             descs_for_top_level[f]=feature_descriptions[f]
-    feature, similarity = get_description(descs_for_top_level, "Features", model)
+    if not descs_for_top_level:
+        return None
+    feature, similarity = summarize_bounded(
+        descs_for_top_level,
+        "Features",
+        model,
+        "join-root",
+        lambda payload, mode, selected_model, stage: get_description(
+            payload, mode, selected_model, stage, feature_budget
+        ),
+        budget=feature_budget,
+    )
     feature_id = upload_features_to_graph(graph, feature, similarity, list(descs_for_top_level.keys()), 0, EX, BASE_URI)
     print("Total features: "+str(total_nodes))
     

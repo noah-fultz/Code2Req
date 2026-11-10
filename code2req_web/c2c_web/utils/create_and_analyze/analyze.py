@@ -7,6 +7,7 @@ from c2c_web.utils.process.process_req.process_eval_file import process_eval_fil
 from c2c_web.utils.process.process_req.compare import compare
 from c2c_web.utils.process.process_repo.cluster_code import cluster_code_artifacts
 from c2c_web.utils.process.process_repo.join_features import join_features
+from c2c_web.utils.process.process_repo.feature_generation import get_feature_prompt_budget
 from c2c_web.utils.utils import get_vector_collection_names
 from rdflib import Graph, Namespace
 import requests
@@ -42,6 +43,7 @@ def start_repository_analysis(project):
     graph_file_flat="data/"+project_name+"/ttl-files/output_infomap_flat.ttl"
     graph_db_url=settings.SPARQL_ENDPOINT+project_name
     vector_collection_code, vector_collection_feature,_ = get_vector_collection_names(project_name)
+    feature_budget = get_feature_prompt_budget()
 
     # # 1. Extract and describe ALL code artifacts
     graph, lines_of_code = build_code_repository_graph(repo_dir, settings.GRAPH_URI)
@@ -50,12 +52,15 @@ def start_repository_analysis(project):
     # # 2. Find call-graphs and make features
     graph = Graph()
     graph.parse(graph_file_code_repo, format="turtle")
-    cluster_code_artifacts(graph, settings.GRAPH_URI, repo_dir, model, clusters)
+    cluster_code_artifacts(
+        graph, settings.GRAPH_URI, repo_dir, model, clusters,
+        feature_budget=feature_budget,
+    )
     graph.serialize(graph_file_flat, format="turtle") # Storing in case something breaks 
     
     graph = Graph()
     graph.parse(graph_file_flat, format="turtle") 
-    join_features(graph, settings.GRAPH_URI, repo_dir, model)
+    join_features(graph, settings.GRAPH_URI, repo_dir, model, feature_budget=feature_budget)
     graph.serialize(graph_file, format="turtle") # Storing in case something breaks 
     
     # 3. Upload model and graph to graphDB

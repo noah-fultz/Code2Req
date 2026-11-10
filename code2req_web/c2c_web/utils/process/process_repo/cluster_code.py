@@ -4,6 +4,19 @@ from rdflib import RDF, Graph, Literal, URIRef, Namespace
 from c2c_web.utils.prompts import Feature, get_tag_features_sys_prompt, get_tag_features_user_prompt
 from c2c_web.utils.utils import cosine_similarity, embed
 from c2c_web.utils.call_ollama import safe_ollama_chat
+from c2c_web.utils.process.process_repo.feature_generation import (
+    FeatureReductionError,
+    check_feature_prompt_budget,
+    get_feature_generation_options,
+    get_feature_prompt_budget,
+    log_feature_response_telemetry,
+    render_feature_messages,
+    summarize_bounded,
+)
+from c2c_web.utils.process.process_repo.source_chunks import (
+    collect_cluster_artifacts,
+    pack_source_artifacts,
+)
 from typing import List, Tuple
 from infomap import Infomap
 from collections import defaultdict
@@ -142,12 +155,28 @@ def get_artifact_cluster_descriptions(cluster_members, graph, EX):
     return all_desc
 
 
-def get_description(all_desc, type, model):
-    messages=[{'role': 'system', 'content': get_tag_features_sys_prompt(type)}]
-    messages.append({'role': 'user', 'content': get_tag_features_user_prompt(str(all_desc))})
-    print("Sending tokens: "+str(get_tokens(get_tag_features_user_prompt(str(all_desc)))))
-    response = safe_ollama_chat(model=model,messages=messages,format=Feature)
-    feature = Feature.model_validate_json(response.message.content)
+def get_description(all_desc, type, model, stage="cluster", budget=None):
+    messages = render_feature_messages(all_desc, type)
+    estimate = check_feature_prompt_budget(messages, model, stage, budget=budget)
+    print(f"Estimate: {estimate} tokens")
+    response = safe_ollama_chat(
+        model=model,
+        messages=messages,
+        format=Feature,
+        options=get_feature_generation_options(budget),
+    )
+    if response is None or not getattr(response, "message", None):
+        raise FeatureReductionError(f"Ollama returned no response during {stage} feature generation")
+    log_feature_response_telemetry(response, model, stage)
+    content = getattr(response.message, "content", None)
+    if not content:
+        raise FeatureReductionError(f"Ollama returned empty content during {stage} feature generation")
+    try:
+        feature = Feature.model_validate_json(content)
+    except Exception as error:
+        raise FeatureReductionError(
+            f"Ollama returned an invalid Feature during {stage} feature generation"
+        ) from error
     similarity = cosine_similarity(embed(" ".join(str(v) for v in all_desc.values()))[0], embed(feature.description)[0])
     return feature, similarity
 
@@ -162,7 +191,7 @@ def upload_features_to_graph(graph: Graph, feature, score, members, level, EX:Na
     feature_uri = URIRef(f"{BASE_URI}#{feature_id}")
     graph.add((feature_uri, EX.name, Literal(feature.name)))
     graph.add((feature_uri, EX.description, Literal(feature.description)))
-    graph.add((feature_uri, EX.score, Literal(f"Cosine similarity on embeddings: {score:.4f}")))
+    graph.add((feature_uri, EX.score, Literal(f"Mean cosine similarity across bounded feature calls: {score:.4f}")))
     graph.add((feature_uri, EX.level, Literal(str(level))))
     graph.add((feature_uri, RDF.type, EX.Feature))
     for artifact_uri in members:
@@ -170,6 +199,9 @@ def upload_features_to_graph(graph: Graph, feature, score, members, level, EX:Na
     return str(feature_uri)
 
 def run_infomap(edge_list, preferred_cluster_size, force_split=False):
+    if not edge_list:
+        return {}
+
     uri_to_id = {uri: idx for idx, uri in enumerate(set([n for edge in edge_list for n in edge]))}
     id_to_uri = {v: k for k, v in uri_to_id.items()}
 
@@ -195,22 +227,20 @@ def recursive_cluster_maker(
     final_cluster_map, edge_list, all_embeddings, preferred_cluster_size,
     graph, EX, max_depth, depth, prev_clusters=None
 ):
+    def partition_signature(cluster_map):
+        return sorted(tuple(sorted(members)) for members in cluster_map.values())
+
     force_split = False
     current_clusters = run_infomap(edge_list, preferred_cluster_size, force_split)
+    unchanged_partition = False
 
     # Check if clustering is the same as previous
     if prev_clusters is not None:
-        same = True
-        if len(current_clusters) != len(prev_clusters):
-            same = False
-        else:
-            for cid in current_clusters:
-                if cid not in prev_clusters or set(current_clusters[cid]) != set(prev_clusters[cid]):
-                    same = False
-                    break
-        if same:
+        previous_signature = partition_signature(prev_clusters)
+        if partition_signature(current_clusters) == previous_signature:
             force_split = True
             current_clusters = run_infomap(edge_list, preferred_cluster_size, force_split)
+            unchanged_partition = partition_signature(current_clusters) == previous_signature
 
     depth += 1
     singles = []
@@ -219,7 +249,7 @@ def recursive_cluster_maker(
     for cid in current_clusters:
         members = current_clusters[cid]
 
-        if len(members) > preferred_cluster_size:
+        if len(members) > preferred_cluster_size and depth < max_depth and not unchanged_partition:
             edge_list_cluster = get_artifact_edgelist(graph, EX, all_embeddings, members)
 
             if not edge_list_cluster:
@@ -277,7 +307,16 @@ def recursive_cluster_maker(
     return valid_cluster_ids
 
 
-def cluster_code_artifacts(graph: Graph, ex: str, repo_root: str, model:str, preferred_cluster_size=10, hierarchical=False):
+def cluster_code_artifacts(
+    graph: Graph,
+    ex: str,
+    repo_root: str,
+    model: str,
+    preferred_cluster_size=10,
+    hierarchical=False,
+    feature_budget=None,
+):
+    feature_budget = feature_budget or get_feature_prompt_budget()
     EX = Namespace(ex + "#")
     REPO_ROOT_PATH = Path(repo_root).resolve()
     BASE_URI = f"http://example.org/{REPO_ROOT_PATH.name}"
@@ -301,6 +340,32 @@ def cluster_code_artifacts(graph: Graph, ex: str, repo_root: str, model:str, pre
         prev_clusters=None  # initial call
     )
 
+    eligible_artifacts = {
+        str(artifact)
+        for artifact_type in (EX.Function, EX.Class, EX.Snippet)
+        for artifact in graph.subjects(RDF.type, artifact_type)
+    }
+    clustered_artifacts = {
+        member
+        for cluster in final_cluster_map.values()
+        for member in cluster["members"]
+    }
+    isolated_artifacts = eligible_artifacts - clustered_artifacts
+    if isolated_artifacts:
+        isolated_records = collect_cluster_artifacts(graph, EX, isolated_artifacts)
+        isolated_by_file = defaultdict(list)
+        for artifact in isolated_records:
+            isolated_by_file[artifact.file_uri].append(artifact.uri)
+        for file_uri in sorted(isolated_by_file):
+            cluster_id = len(final_cluster_map) + 1
+            members = isolated_by_file[file_uri]
+            final_cluster_map[cluster_id] = {
+                "depth": 1,
+                "members": members,
+                "children": [],
+            }
+            top_level_clusters.append(cluster_id)
+
     # Optional: Create a root node to hold the top-level clusters
     final_cluster_map[len(final_cluster_map)+1] = {
         "depth": 0,
@@ -319,11 +384,25 @@ def cluster_code_artifacts(graph: Graph, ex: str, repo_root: str, model:str, pre
     for c in final_cluster_map:
         print(f"ID: {c} Depth: {final_cluster_map[c]['depth']} num_members: {len(final_cluster_map[c]['members'])} num_children: {len(final_cluster_map[c]['children'])}")
         if final_cluster_map[c]["members"]!=[]:
-            all_desc = get_artifact_cluster_descriptions(final_cluster_map[c]["members"], graph, EX)
-            feature, similarity = get_description(all_desc, "Code", model)
+            members = sorted(set(final_cluster_map[c]["members"]))
+            artifacts = collect_cluster_artifacts(graph, EX, members)
+            source_batches = pack_source_artifacts(
+                artifacts, "Code", model, budget=feature_budget
+            )
+            feature, similarity = summarize_bounded(
+                {},
+                "Code",
+                model,
+                f"cluster-{c}",
+                lambda payload, mode, selected_model, stage: get_description(
+                    payload, mode, selected_model, stage, feature_budget
+                ),
+                budget=feature_budget,
+                initial_batches=[batch.payload for batch in source_batches],
+            )
             if hierarchical==False:
                 final_cluster_map[c]['depth']=2
-            feature_id = upload_features_to_graph(graph, feature, similarity, final_cluster_map[c]["members"], final_cluster_map[c]['depth'], EX, BASE_URI)
+            feature_id = upload_features_to_graph(graph, feature, similarity, members, final_cluster_map[c]['depth'], EX, BASE_URI)
             feature_desc_map[str(c)]={"desc":feature.name+": "+feature.description, "uri":feature_id}
         elif hierarchical==True:
             all_desc={}
@@ -332,7 +411,18 @@ def cluster_code_artifacts(graph: Graph, ex: str, repo_root: str, model:str, pre
                 if str(f) in feature_desc_map:
                     all_desc[str(f)]=feature_desc_map[str(f)]["desc"]
                     child_uris.append(feature_desc_map[str(f)]["uri"])
-            feature, similarity = get_description(all_desc, "Features", model)
+            if not all_desc:
+                continue
+            feature, similarity = summarize_bounded(
+                all_desc,
+                "Features",
+                model,
+                f"cluster-join-{c}",
+                lambda payload, mode, selected_model, stage: get_description(
+                    payload, mode, selected_model, stage, feature_budget
+                ),
+                budget=feature_budget,
+            )
             feature_id = upload_features_to_graph(graph, feature, similarity, child_uris, final_cluster_map[c]['depth'], EX, BASE_URI)
             feature_desc_map[str(c)]={"desc":feature.name+": "+feature.description, "uri":feature_id}
     print("Done with initial clusters")
