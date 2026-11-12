@@ -24,7 +24,7 @@ def extract_code_artifacts_c(tree, code_bytes):
         # Iterate through the node list until an identifier is found
         curr_declarator = node.child_by_field_name("declarator")
         while curr_declarator is not None:
-            if curr_declarator.type == "identifier":
+            if curr_declarator.type in ("identifier", "type_identifier"):
                 return node_text(curr_declarator)
             curr_declarator = curr_declarator.child_by_field_name("declarator")
         # If no identifier is found, return unknown
@@ -70,6 +70,10 @@ def extract_code_artifacts_c(tree, code_bytes):
                 inner_artifacts.append(("Function", node_text(child), function_name))
 
                 # TODO: Add recursive processing of function definitions
+                # child_artifacts, child_imports, scope_snippet_index = extract_inner_artifacts(child, seen_nodes, scope_name, scope_snippet_index)
+                # Aggregate the artifacts and imports from the recursion
+                # inner_artifacts += child_artifacts
+                # inner_imports += child_imports
 
             # Process preprocessing directives
             elif child.type == "preproc_def":
@@ -83,11 +87,23 @@ def extract_code_artifacts_c(tree, code_bytes):
 
             # Process globally-scoped variable defintiions
             elif child.type == "declaration":
-                # Create a globally unique name for the preprocessing directive
-                snippet_name = f"declaration_{scope_name}_{scope_snippet_index}"
-                scope_snippet_index += 1
+                # Pull the potential declaration type
+                type_node = child.child_by_field_name("type")
+
+                # Determine if it is a classy object
+                if type_node is not None and type_node.type in ("struct_specifier", "union_specifier", "enum_specifier") and type_node.child_by_field_name("body") is not None:
+                    artifact_name = get_name(type_node).strip()
+                    kind = "Class"
+                else:
+                    artifact_name = "unknown"
+                    kind = "Snippet"
+
+                # Create a globally unique name for the declaration
+                if artifact_name == "unknown":
+                    artifact_name = f"declaration_{scope_name}_{scope_snippet_index}"
+                    scope_snippet_index += 1
                 # Push the declaration as a snippet to the artifact list
-                inner_artifacts.append(("Snippet", node_text(child), snippet_name))
+                inner_artifacts.append((kind, node_text(child), artifact_name))
 
             # Process ifdef and ifndef
             elif child.type == "preproc_ifdef":
@@ -101,10 +117,53 @@ def extract_code_artifacts_c(tree, code_bytes):
             elif child.type == "struct_specifier":
                 # Pull the name of the struct
                 struct_name = get_name(child).strip()
+                if struct_name == "unknown":
+                    struct_name = f"struct_{scope_name}_{scope_snippet_index}"
+                    scope_snippet_index += 1
+
+                # Check if it is a classy definition or just a declaration
+                kind = "Class"
+                if child.child_by_field_name("body") is None:
+                    kind = "Snippet"
                 # Push the function into the artifact list
-                inner_artifacts.append(("Class", node_text(child), struct_name))
+                inner_artifacts.append((kind, node_text(child), struct_name))
+
+            # Process enum definitions
+            elif child.type == "enum_specifier":
+                # Pull the name of the struct
+                enum_name = get_name(child).strip()
+                if enum_name == "unknown":
+                    enum_name = f"enum_{scope_name}_{scope_snippet_index}"
+                    scope_snippet_index += 1
+
+                # Check if it is a classy definition or just a declaration
+                kind = "Class"
+                if child.child_by_field_name("body") is None:
+                    kind = "Snippet"
+                # Push the function into the artifact list
+                inner_artifacts.append((kind, node_text(child), enum_name))
 
             # TODO: Handle type_identifier
+
+            # TODO: Handle type_definition
+            elif child.type == "type_definition":
+                # Pull the typedef alias
+                type_node = child.child_by_field_name("type")
+                typedef_name = get_name(child).strip()
+
+                # If the node is a struct, enum, or union specifier then it's a class
+                if type_node and type_node.type in ("struct_specifier", "enum_specifier", "union_specifier") and type_node.child_by_field_name("body"):
+                    kind = "Class"
+                else:
+                    kind = "Snippet"
+
+                # Alias the name if there is not an identifier found
+                if typedef_name == "unknown":
+                    typedef_name = f"typedef_{scope_name}_{scope_snippet_index}"
+                    scope_snippet_index += 1
+
+                # Push the typedef into the artifact list
+                inner_artifacts.append((kind, node_text(child), typedef_name))
 
             # TODO: Handle union_specifier and enum_specifier
 
